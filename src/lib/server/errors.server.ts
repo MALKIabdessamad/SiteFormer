@@ -1,15 +1,7 @@
+import { AppError } from './app-error'
 import { ConfigError } from './env.server'
 
-/** An error whose message is safe to show the user. */
-export class AppError extends Error {
-  constructor(
-    message: string,
-    readonly code: 'unauthorized' | 'not_found' | 'limit' | 'invalid' | 'unavailable' = 'invalid',
-  ) {
-    super(message)
-    this.name = 'AppError'
-  }
-}
+export { AppError }
 
 /**
  * Runs a server-function body and makes sure only safe messages reach the browser:

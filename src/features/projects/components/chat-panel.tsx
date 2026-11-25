@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, ArrowUp, Clock, Eye, Loader2, Trash2 } from 'lucide-react'
 import type { Project } from '../types'
@@ -19,6 +19,8 @@ type ChatPanelProps = {
  * the composer is disabled. The agent will consume the queued prompt once it exists.
  */
 export function ChatPanel({ project, deleting, onDelete, onShowPreview }: ChatPanelProps) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
   return (
     <section aria-label="Chat" className="flex h-full min-h-0 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-1 px-2">
@@ -50,15 +52,51 @@ export function ChatPanel({ project, deleting, onDelete, onShowPreview }: ChatPa
         </button>
         <button
           type="button"
-          onClick={onDelete}
-          disabled={deleting}
+          onClick={() => setConfirmingDelete(true)}
+          disabled={deleting || confirmingDelete}
           aria-label="Delete project"
           title="Delete project"
           className={iconButton + ' hover:text-danger'}
         >
-          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          <Trash2 className="h-4 w-4" />
         </button>
       </header>
+
+      {confirmingDelete && (
+        <div
+          role="alertdialog"
+          aria-labelledby="delete-title"
+          aria-describedby="delete-desc"
+          className="mx-3 mb-1 rise rounded-2xl border border-danger/30 bg-danger/10 p-3"
+        >
+          <p id="delete-title" className="text-sm font-semibold">
+            Delete this project?
+          </p>
+          <p id="delete-desc" className="mt-0.5 text-xs text-dim">
+            Its sandbox and preview are deleted too. This can’t be undone.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setConfirmingDelete(false)}
+              disabled={deleting}
+              className="h-9 rounded-full px-4 text-sm font-medium text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={deleting}
+              className="inline-flex h-9 items-center gap-2 rounded-full bg-danger px-4 text-sm font-semibold text-paper transition-opacity hover:opacity-90 disabled:opacity-70"
+            >
+              {deleting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <ol className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         <li className="flex flex-col items-end gap-1.5">

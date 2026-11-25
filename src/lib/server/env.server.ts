@@ -13,10 +13,25 @@ const schema = z.object({
 
   /** Cheap, fast OpenRouter model that names new projects. */
   NAMING_MODEL: z.string().min(3).default('google/gemini-2.5-flash-lite'),
+  /**
+   * Comma-separated fallbacks OpenRouter tries (same request) when NAMING_MODEL is unavailable,
+   * e.g. rate-limited upstream. Different providers on purpose.
+   */
+  NAMING_FALLBACK_MODELS: z
+    .string()
+    .default('openai/gpt-4.1-nano,mistralai/mistral-small-3.2-24b-instruct')
+    .transform((list) =>
+      list
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean),
+    ),
   /** Agent37 template every sandbox starts from (Node, git, build tools). */
   AGENT37_TEMPLATE: z.string().min(1).default('agent37-base'),
   /** Public git repo cloned into each new sandbox as the user's starter app. */
   STARTER_REPO: z.url().default('https://github.com/MALKIabdessamad/app'),
+  /** Port the starter's `bun run dev` listens on (8080 in MALKIabdessamad/app's vite.config). */
+  STARTER_PORT: z.coerce.number().int().min(1024).max(65535).default(8080),
   /** Optional branch or tag of STARTER_REPO (default branch when unset). */
   STARTER_REF: z
     .string()

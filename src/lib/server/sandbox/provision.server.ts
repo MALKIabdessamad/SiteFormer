@@ -8,9 +8,10 @@ import {
   shellQuote,
 } from './agent37.server'
 
-/** Where the starter app lives inside the sandbox, and the port its dev server listens on. */
+/** Where the starter app lives inside the sandbox. */
 export const SITE_DIR = '/home/node/site'
-export const PREVIEW_PORT = 8080 // fixed by the starter's vite.config.ts (strictPort)
+/** Port of the starter's dev server (STARTER_PORT, 8080 for the default starter). */
+const previewPort = () => serverEnv().STARTER_PORT
 const BUN_VERSION = '1.4.5'
 
 export type SandboxPatch = {
@@ -78,7 +79,7 @@ const STEP_ERRORS: Record<number, string> = {
 /** Polls the dev server from inside the sandbox until it answers (any non-5xx status). */
 async function waitForPreview(sandboxId: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  const probe = `curl -s -o /dev/null -m 10 -w '%{http_code}' http://localhost:${PREVIEW_PORT}/`
+  const probe = `curl -s -o /dev/null -m 10 -w '%{http_code}' http://localhost:${previewPort()}/`
   let last = ''
   while (Date.now() < deadline) {
     const result = await exec(sandboxId, probe, 30_000).catch(() => null)
@@ -102,11 +103,11 @@ async function provision(target: ProvisionTarget): Promise<void> {
   if (!sandboxId) {
     const instance = await createInstance({
       name: `siteformer-${target.projectId.slice(0, 8)}`,
-      previewPort: PREVIEW_PORT,
+      previewPort: previewPort(),
       metadata: { project_id: target.projectId, user_id: target.userId },
     })
     sandboxId = instance.id
-    previewUrl = instance.public_ports?.find((p) => p.port === PREVIEW_PORT)?.url ?? null
+    previewUrl = instance.public_ports?.find((p) => p.port === previewPort())?.url ?? null
     // Save the id before anything else, so a later failure can still reuse or clean it up.
     await target.save({ sandbox_id: sandboxId, preview_url: previewUrl })
   }
@@ -118,7 +119,7 @@ async function provision(target: ProvisionTarget): Promise<void> {
   }
 
   await waitForPreview(sandboxId, 120_000)
-  previewUrl ??= await ensurePublicUrl(sandboxId, PREVIEW_PORT)
+  previewUrl ??= await ensurePublicUrl(sandboxId, previewPort())
   await target.save({ preview_url: previewUrl, status: 'ready', error: null })
 }
 

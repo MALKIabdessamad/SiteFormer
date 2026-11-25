@@ -21,10 +21,10 @@ export function useProjects() {
     return subscribeToProjects(() => void refresh())
   }, [refresh])
 
-  return { projects, loading, refresh }
+  return { projects, loading }
 }
 
-export type ProjectState =
+type ProjectState =
   | { status: 'loading'; project: null }
   | { status: 'missing'; project: null }
   | { status: 'error'; project: null }

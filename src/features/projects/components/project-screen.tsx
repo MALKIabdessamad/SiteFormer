@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Spinner } from '~/components/ui/spinner'
+import { site } from '~/config/site'
 import { useRedirectOnSignOut } from '~/features/auth'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
@@ -18,6 +19,12 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [error, setError] = useState('')
 
   useRedirectOnSignOut()
+
+  // Tab title follows the live name (the AI renames the project a moment after creation).
+  const name = project?.name
+  useEffect(() => {
+    if (name) document.title = `${name} · ${site.name}`
+  }, [name])
 
   // Opening the page resumes an interrupted setup, or wakes a sleeping sandbox.
   useEffect(() => {
@@ -40,7 +47,6 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   }
 
   const remove = async () => {
-    if (!window.confirm('Delete this project and its sandbox? This can’t be undone.')) return
     setBusy('delete')
     setError('')
     try {

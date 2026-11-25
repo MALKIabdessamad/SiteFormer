@@ -38,26 +38,44 @@ export type ExecResult = { exitCode: number; stdout: string; stderr: string; tru
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Statuses worth retrying: rate limit, checkpointing (409), transient upstream errors. */
+/** API calls: retry rate limits, checkpointing (409) and transient upstream errors. */
 const RETRYABLE = new Set([409, 429, 502, 503, 504])
+/**
+ * Commands: only retry rejections that happen BEFORE the command runs (409 while the sandbox
+ * checkpoints, 429). A 502/504 can arrive while the command is still running, and re-sending it
+ * would run it twice in parallel.
+ */
+const EXEC_RETRYABLE = new Set([409, 429])
 
 async function request(
   url: string,
-  init: RequestInit & { timeoutMs?: number; retries?: number } = {},
+  init: RequestInit & {
+    timeoutMs?: number
+    retries?: number
+    retryOn?: Set<number>
+    /** Retry when no response arrives at all. Off for commands (they may still be running). */
+    retryNetworkErrors?: boolean
+  } = {},
 ): Promise<Response> {
-  const { timeoutMs = 30_000, retries = 0, ...rest } = init
+  const {
+    timeoutMs = 30_000,
+    retries = 0,
+    retryOn = RETRYABLE,
+    retryNetworkErrors = true,
+    ...rest
+  } = init
   for (let attempt = 0; ; attempt++) {
     let response: Response | undefined
     try {
       response = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) })
     } catch (error) {
-      if (attempt >= retries) {
+      if (attempt >= retries || !retryNetworkErrors) {
         const reason =
           error instanceof Error && error.name === 'TimeoutError' ? 'timed out' : 'failed'
         throw new SandboxError(`Agent37 request ${reason}.`)
       }
     }
-    if (response && (!RETRYABLE.has(response.status) || attempt >= retries)) return response
+    if (response && (!retryOn.has(response.status) || attempt >= retries)) return response
     await sleep(Math.min(1000 * 2 ** attempt, 8000))
   }
 }
@@ -144,6 +162,8 @@ export async function exec(id: string, command: string, timeoutMs = 60_000): Pro
     body: JSON.stringify({ command }),
     timeoutMs,
     retries: 6,
+    retryOn: EXEC_RETRYABLE,
+    retryNetworkErrors: false,
   })
   const data = (await (await ensureOk(response, 'command')).json()) as {
     exit_code: number

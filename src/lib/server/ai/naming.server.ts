@@ -19,7 +19,7 @@ const SYSTEM_PROMPT =
 
 /** One naming call. Throws on any failure. */
 async function askModel(text: string): Promise<string> {
-  const { NAMING_MODEL, OPENROUTER_API_KEY } = serverEnv()
+  const { NAMING_MODEL, NAMING_FALLBACK_MODELS, OPENROUTER_API_KEY } = serverEnv()
   const answer = await chat({
     // OpenRouter ids are plain strings and new models appear faster than the adapter's list.
     adapter: createOpenRouterText(
@@ -31,15 +31,17 @@ async function askModel(text: string): Promise<string> {
     systemPrompts: [SYSTEM_PROMPT],
     messages: [{ role: 'user', content: `Website description:\n"""\n${text}\n"""` }],
     outputSchema: Answer,
+    // OpenRouter falls back to these within the same request if the primary model errors.
+    modelOptions: { models: NAMING_FALLBACK_MODELS as never },
     abortController: abortAfter(10_000),
   })
   return answer.name
 }
 
 /**
- * Names a project from the user's first prompt with a cheap OpenRouter model (one retry, since
- * providers occasionally return transient errors). Never throws: on failure the name is derived
- * from the prompt instead.
+ * Names a project from the user's first prompt with a cheap OpenRouter model. OpenRouter falls back
+ * to other providers when the primary is rate-limited, plus one retry here. Never throws: on
+ * failure the name is derived from the prompt instead.
  */
 export async function generateProjectName(prompt: string): Promise<string> {
   const text = prompt.trim().slice(0, 1000)

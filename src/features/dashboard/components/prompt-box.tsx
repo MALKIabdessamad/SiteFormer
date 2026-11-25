@@ -1,6 +1,9 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { ArrowUp, Loader2 } from 'lucide-react'
-import { PROMPT_MAX_LENGTH as MAX_LENGTH } from '~/features/projects/lib/constants'
+import {
+  PROMPT_MAX_LENGTH as MAX_LENGTH,
+  PROMPT_MIN_LENGTH as MIN_LENGTH,
+} from '~/features/projects/lib/constants'
 import { storage } from '~/lib/utils/storage'
 
 export type PromptBoxHandle = {
@@ -36,8 +39,9 @@ export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
   }, [text])
 
   const trimmed = text.trim()
+  const ready = trimmed.length >= MIN_LENGTH && !busy
   const submit = () => {
-    if (trimmed && !busy) onSubmit(trimmed)
+    if (ready) onSubmit(trimmed)
   }
 
   return (
@@ -70,7 +74,7 @@ export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
         <button
           type="button"
           onClick={submit}
-          disabled={!trimmed || busy}
+          disabled={!ready}
           className="inline-flex h-11 min-w-[104px] shrink-0 btn-sculpted items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold tracking-wide disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? (

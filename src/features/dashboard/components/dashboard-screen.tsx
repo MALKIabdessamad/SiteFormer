@@ -16,7 +16,7 @@ import { PromptBox, type PromptBoxHandle } from './prompt-box'
 export function DashboardScreen({ email }: { email: string }) {
   const navigate = useNavigate()
   const sidebar = useSidebar()
-  const { projects } = useProjects()
+  const { projects, loading: loadingProjects } = useProjects()
   const promptRef = useRef<PromptBoxHandle>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
@@ -68,6 +68,7 @@ export function DashboardScreen({ email }: { email: string }) {
       <AppSidebar
         email={email}
         projects={projects}
+        loadingProjects={loadingProjects}
         collapsed={sidebar.collapsed}
         open={sidebar.open}
         closeButtonRef={sidebar.closeButtonRef}

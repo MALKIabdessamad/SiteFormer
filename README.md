@@ -135,7 +135,8 @@ browser roles. The table is in the `supabase_realtime` publication.
    `Dockerfile` (multi-stage Bun image, runs as a non-root user).
 2. Variables:
    - **Required:** `SUPABASE_SECRET_KEY`, `AGENT37_API_KEY`, `OPENROUTER_API_KEY` (server-only).
-   - Optional: `NAMING_MODEL`, `STARTER_REPO`, `STARTER_REF`, `MAX_PROJECTS_PER_USER`,
+   - Optional: `NAMING_MODEL`, `NAMING_FALLBACK_MODELS`, `STARTER_REPO`, `STARTER_REF`,
+     `STARTER_PORT`, `MAX_PROJECTS_PER_USER`,
      `AGENT37_TEMPLATE`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (inlined into
      the browser bundle at **build** time, so redeploy after changing them). `PORT` is set by
      Railway automatically.

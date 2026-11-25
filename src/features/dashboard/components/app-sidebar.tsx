@@ -16,6 +16,8 @@ const FILTER_THRESHOLD = 6
 type AppSidebarProps = {
   email: string
   projects: ProjectSummary[]
+  /** True until the first load finishes (no false "No sites yet" flash). */
+  loadingProjects?: boolean
   collapsed: boolean
   open: boolean
   closeButtonRef: RefObject<HTMLButtonElement | null>
@@ -29,6 +31,7 @@ type AppSidebarProps = {
 export function AppSidebar({
   email,
   projects,
+  loadingProjects = false,
   collapsed,
   open,
   closeButtonRef,
@@ -167,7 +170,7 @@ export function AppSidebar({
               </Link>
             </li>
           ))}
-          {visible.length === 0 && (
+          {visible.length === 0 && !loadingProjects && (
             <li className="px-3 py-2 text-sm text-dim">
               {q ? 'No sites match.' : 'No sites yet. Describe one to start.'}
             </li>

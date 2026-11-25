@@ -9,6 +9,7 @@ import { generateProjectName } from '~/lib/server/ai/naming.server'
 import { requireUser } from '~/lib/server/require-user'
 import { serverEnv } from '~/lib/server/env.server'
 import { AppError, safely } from '~/lib/server/errors.server'
+import { validate } from '~/lib/server/validate'
 import { deleteInstance } from '~/lib/server/sandbox/agent37.server'
 import {
   ensureProvisioned,
@@ -18,11 +19,21 @@ import {
   type SandboxPatch,
 } from '~/lib/server/sandbox/provision.server'
 import { supabaseAdmin } from '~/lib/server/supabase-admin.server'
-import { PROMPT_MAX_LENGTH } from '../lib/constants'
+import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from '../lib/constants'
 import { nameFromPrompt } from '../lib/project-name'
 import type { Project } from '../types'
 
-const ProjectIdInput = z.object({ projectId: z.uuid() })
+const ProjectIdInput = validate(z.object({ projectId: z.uuid('Project not found.') }))
+
+const CreateInput = validate(
+  z.object({
+    prompt: z
+      .string('Describe the site you want to build.')
+      .trim()
+      .min(PROMPT_MIN_LENGTH, 'Describe your site in a few more words.')
+      .max(PROMPT_MAX_LENGTH, `Keep the description under ${PROMPT_MAX_LENGTH} characters.`),
+  }),
+)
 
 type OwnedProject = Pick<Project, 'id' | 'user_id' | 'status' | 'sandbox_id'>
 
@@ -61,7 +72,7 @@ const background = (job: Promise<unknown>) => void job.catch(() => undefined)
  */
 export const createProject = createServerFn({ method: 'POST' })
   .middleware([requireUser])
-  .validator(z.object({ prompt: z.string().trim().min(2).max(PROMPT_MAX_LENGTH) }))
+  .validator(CreateInput)
   .handler(({ data, context }) =>
     safely('createProject', async () => {
       const db = supabaseAdmin()
@@ -75,7 +86,7 @@ export const createProject = createServerFn({ method: 'POST' })
       if (countError) throw countError
       if ((count ?? 0) >= MAX_PROJECTS_PER_USER) {
         throw new AppError(
-          `You can have up to ${MAX_PROJECTS_PER_USER} projects. Delete one to create another.`,
+          `You can have up to ${MAX_PROJECTS_PER_USER} ${MAX_PROJECTS_PER_USER === 1 ? 'project' : 'projects'}. Delete one to create another.`,
           'limit',
         )
       }
