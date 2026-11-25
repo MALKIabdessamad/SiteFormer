@@ -3,34 +3,25 @@ import type { User } from '@supabase/supabase-js'
 import { getSupabase } from '~/lib/supabase/client'
 
 export type AuthSession =
-  | { status: 'loading'; user: null; recovering: false }
-  | { status: 'anonymous'; user: null; recovering: false }
-  | { status: 'authenticated'; user: User; recovering: boolean }
+  | { status: 'loading'; user: null }
+  | { status: 'anonymous'; user: null }
+  | { status: 'authenticated'; user: User }
 
-const LOADING: AuthSession = { status: 'loading', user: null, recovering: false }
-
-/**
- * Tracks the Supabase session in the browser. `recovering` is true after the user
- * arrives through a password-reset link, until they set a new password.
- */
-export function useAuthSession() {
-  const [session, setSession] = useState<AuthSession>(LOADING)
+/** Tracks the Supabase session in the browser. */
+export function useAuthSession(): AuthSession {
+  const [session, setSession] = useState<AuthSession>({ status: 'loading', user: null })
 
   useEffect(() => {
-    // Fires INITIAL_SESSION right away, then every sign-in, sign-out and token refresh.
-    const { data } = getSupabase().auth.onAuthStateChange((event, current) => {
-      setSession((prev) => {
-        if (!current?.user) return { status: 'anonymous', user: null, recovering: false }
-        const recovering =
-          event === 'PASSWORD_RECOVERY' || (prev.status === 'authenticated' && prev.recovering)
-        return { status: 'authenticated', user: current.user, recovering }
-      })
+    // Fires INITIAL_SESSION right away, then on every sign-in, sign-out and token refresh.
+    const { data } = getSupabase().auth.onAuthStateChange((_event, current) => {
+      setSession(
+        current?.user
+          ? { status: 'authenticated', user: current.user }
+          : { status: 'anonymous', user: null },
+      )
     })
     return () => data.subscription.unsubscribe()
   }, [])
 
-  const finishRecovery = () =>
-    setSession((prev) => (prev.status === 'authenticated' ? { ...prev, recovering: false } : prev))
-
-  return { session, finishRecovery }
+  return session
 }

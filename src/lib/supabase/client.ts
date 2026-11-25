@@ -18,8 +18,9 @@ export function getSupabase(): SupabaseClient {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+      // Implicit flow: confirmation and reset links work even when opened on another
+      // device or browser (PKCE needs the verifier stored in the original browser).
       detectSessionInUrl: true,
-      flowType: 'pkce',
     },
   })
   return client

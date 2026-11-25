@@ -10,10 +10,19 @@ export type Credentials = { email: string; password: string }
 
 export type AuthResult<T = void> = { ok: true; data: T } | { ok: false; error: string }
 
-/** Where email links (confirmation, password reset) send the user back to. */
-function redirectUrl(): string {
-  return new URL('/', window.location.origin).toString()
+/** Absolute URL on this site, used as the target of links in auth emails. */
+function siteUrl(path: string): string {
+  return new URL(path, window.location.origin).toString()
 }
+
+/** Where the app sends users once they are signed in. */
+export const AFTER_SIGN_IN_PATH = '/dashboard'
+
+/**
+ * Password-reset links land on `/?reset=1`, so the auth page knows to ask for a new
+ * password instead of redirecting the (now signed-in) user to the dashboard.
+ */
+export const RESET_PASSWORD_PATH = '/?reset=1'
 
 async function attempt<T>(fn: () => Promise<T>): Promise<AuthResult<T>> {
   try {
@@ -36,7 +45,7 @@ export const authService = {
       const { data, error } = await getSupabase().auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: redirectUrl() },
+        options: { emailRedirectTo: siteUrl(AFTER_SIGN_IN_PATH) },
       })
       if (error) throw error
       return { needsConfirmation: !data.session }
@@ -45,7 +54,7 @@ export const authService = {
   sendPasswordReset: (email: string) =>
     attempt(async () => {
       const { error } = await getSupabase().auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl(),
+        redirectTo: siteUrl(RESET_PASSWORD_PATH),
       })
       if (error) throw error
     }),
