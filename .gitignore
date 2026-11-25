@@ -4,4 +4,7 @@ node_modules
 .nitro
 dist
 .env
-e2e-screenshots
+.env.*
+!.env.example
+*.log
+.DS_Store

@@ -4,6 +4,7 @@ dist
 .tanstack
 .nitro
 .git
+.github
 .env
 .env.*
 !.env.example
