@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Coins, Globe, LayoutTemplate, LogOut, PanelLeft, Plus, Search, X } from 'lucide-react'
-import { Logo } from '~/components/brand/logo'
+import { Logo, LogoMark } from '~/components/brand/logo'
 import { cn } from '~/lib/utils/cn'
 import type { SiteSummary } from '../types'
 
@@ -59,22 +59,32 @@ export function AppSidebar({
         open ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
       )}
     >
-      <div
-        className={cn(
-          'flex items-center justify-between py-1',
-          collapsed && 'lg:flex-col lg:gap-2',
-        )}
-      >
-        <Link to="/dashboard" className="flex min-w-0 items-center rounded-lg px-2 py-1">
-          <span className={label}>
-            <Logo />
-          </span>
-          {collapsed && (
-            <span className="hidden lg:block">
-              <Logo withName={false} />
+      <div className="flex items-center justify-between py-1">
+        {collapsed ? (
+          // Collapsed (desktop): the logo doubles as the expand button and turns into
+          // the panel icon on hover or keyboard focus.
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label="Expand sidebar"
+            title="Expand sidebar (Ctrl/⌘ B)"
+            className="group relative mx-auto hidden h-9 w-9 cursor-e-resize place-items-center rounded-lg focus-visible:outline-2 focus-visible:outline-signal lg:grid"
+          >
+            <span className="transition-opacity duration-150 group-hover:opacity-0 group-focus-visible:opacity-0">
+              <LogoMark />
             </span>
-          )}
-        </Link>
+            <span
+              aria-hidden
+              className="absolute inset-0 grid place-items-center rounded-lg bg-ink/[0.06] text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+            >
+              <PanelLeft className="h-5 w-5" />
+            </span>
+          </button>
+        ) : (
+          <Link to="/dashboard" className="flex min-w-0 items-center rounded-lg px-2 py-1">
+            <Logo />
+          </Link>
+        )}
         <button
           ref={closeButtonRef}
           type="button"
@@ -84,15 +94,17 @@ export function AppSidebar({
         >
           <X className="h-5 w-5" />
         </button>
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={(collapsed ? 'Expand' : 'Collapse') + ' sidebar (Ctrl/⌘ B)'}
-          className={cn(iconButtonClass, 'hidden lg:grid')}
-        >
-          <PanelLeft className="h-5 w-5" />
-        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar (Ctrl/⌘ B)"
+            className={cn(iconButtonClass, 'hidden cursor-w-resize lg:grid')}
+          >
+            <PanelLeft className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <nav aria-label="Main" className="mt-3 space-y-0.5">
