@@ -2,24 +2,23 @@ import { useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Alert } from '~/components/ui/alert'
 import { authService, useRedirectOnSignOut } from '~/features/auth'
+import { createProject, useProjects } from '~/features/projects'
+import { toErrorMessage } from '~/lib/utils/errors'
 import { useSidebar } from '../hooks/use-sidebar'
-import type { SiteSummary } from '../types'
 import { AppSidebar } from './app-sidebar'
 import { MobileTopBar } from './mobile-top-bar'
 import { PromptBox, type PromptBoxHandle } from './prompt-box'
 
-type DashboardScreenProps = {
-  email: string
-  /** Sites listed in the sidebar. Empty until site generation is connected. */
-  sites?: SiteSummary[]
-}
-
-/** Dashboard UI: sidebar + "what are we building" prompt. Site generation is not wired yet. */
-export function DashboardScreen({ email, sites = [] }: DashboardScreenProps) {
+/**
+ * Dashboard: sidebar with the user's projects + "what are we building" prompt. Sending a prompt
+ * creates a project (named by AI, sandbox set up in the background) and opens it.
+ */
+export function DashboardScreen({ email }: { email: string }) {
   const navigate = useNavigate()
   const sidebar = useSidebar()
+  const { projects } = useProjects()
   const promptRef = useRef<PromptBoxHandle>(null)
-  const [notice, setNotice] = useState('')
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [signingOut, setSigningOut] = useState(false)
 
@@ -27,15 +26,23 @@ export function DashboardScreen({ email, sites = [] }: DashboardScreenProps) {
 
   const startNewSite = () => {
     sidebar.closeDrawer()
-    setNotice('')
     setError('')
     promptRef.current?.clear()
     promptRef.current?.focus()
   }
 
-  const handlePrompt = () => {
+  const handlePrompt = async (prompt: string) => {
+    if (creating) return
+    setCreating(true)
     setError('')
-    setNotice('Building sites isn’t connected yet. Your prompt is saved as a draft.')
+    try {
+      const { id } = await createProject({ data: { prompt } })
+      promptRef.current?.clear()
+      await navigate({ to: '/project/$projectId', params: { projectId: id } })
+    } catch (err) {
+      setError(toErrorMessage(err))
+      setCreating(false)
+    }
   }
 
   const signOut = async () => {
@@ -60,7 +67,7 @@ export function DashboardScreen({ email, sites = [] }: DashboardScreenProps) {
       )}
       <AppSidebar
         email={email}
-        sites={sites}
+        projects={projects}
         collapsed={sidebar.collapsed}
         open={sidebar.open}
         closeButtonRef={sidebar.closeButtonRef}
@@ -88,11 +95,15 @@ export function DashboardScreen({ email, sites = [] }: DashboardScreenProps) {
             <span className="pr-[0.06em] font-normal text-dim italic">building</span> today?
           </h1>
           <div className="mt-7 flex w-full rise justify-center" style={{ animationDelay: '120ms' }}>
-            <PromptBox ref={promptRef} onSubmit={handlePrompt} />
+            <PromptBox
+              ref={promptRef}
+              busy={creating}
+              onSubmit={(text) => void handlePrompt(text)}
+            />
           </div>
-          {(notice || error) && (
+          {error && (
             <div className="mt-4 w-full max-w-[670px] text-center">
-              <Alert tone={error ? 'error' : 'info'}>{error || notice}</Alert>
+              <Alert tone="error">{error}</Alert>
             </div>
           )}
         </section>

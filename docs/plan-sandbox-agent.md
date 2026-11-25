@@ -1,6 +1,7 @@
 # Plan: projects, sandboxes and the vibe-coding agent
 
-Status: **plan only, nothing built yet.**
+Status: **projects table, sandbox provisioning and AI naming are built** (see README →
+“How a project is created”). The `runs`/`messages`/`memories` tables and the agent are next.
 
 Sources: the working code in `MALKIabdessamad/siteform` (Agent37 client, agent loop, naming)
 and the npm READMEs of `@tanstack/ai*` (the agent37.com and tanstack.com docs could not be
@@ -60,7 +61,7 @@ Browser ──SSE──▶ Railway (Bun + TanStack Start)                     Ag
 - [ ] **Template**: which template has Node/Bun + git + curl (reference used `agent37-base`
       and installs Bun itself; check whether a Bun/Node template exists, since that would remove the Bun install step, which takes about 20s).
 - [ ] Create body fields still valid: `template, name, auto_sleep, idle_timeout_seconds,
-    public_ports: [{port, label}], metadata`. Is `metadata.project_id` searchable (for cleanup)?
+public_ports: [{port, label}], metadata`. Is `metadata.project_id` searchable (for cleanup)?
 - [ ] **Statuses** and real cold-start time (`provisioning → running`, `sleeping`, `stopped`).
       Is there a webhook/event for "running"? If yes, use it instead of polling.
 - [ ] **Exec**: `POST https://sandbox.agent37.app/v1/instances/{id}/exec`, header `X-Agent37-Key`,
@@ -137,10 +138,17 @@ memories                   -- long-term memory for ai-memory (per project + per 
 ## 5. Queue and locking (kept as light as possible)
 
 - Enqueue = insert `runs(status='queued')`. Nothing else.
-- Claim (atomic, safe even with several replicas later):
-  `update runs set status='running', started_at=now(), heartbeat_at=now()
- where id = (select id from runs where project_id=$1 and status='queued' order by created_at limit 1
-             for update skip locked) returning *`. The partial unique index guarantees one running run per project.
+- Claim (atomic, safe even with several replicas later). The partial unique index guarantees
+  one running run per project:
+
+  ```sql
+  update runs set status = 'running', started_at = now(), heartbeat_at = now()
+  where id = (
+    select id from runs where project_id = $1 and status = 'queued'
+    order by created_at limit 1 for update skip locked
+  ) returning *;
+  ```
+
 - Triggers that try a claim: provisioning finished, a run finished, a new prompt queued while the sandbox is ready, and server boot.
 - Heartbeat every 15s while running; on boot, `running` runs with heartbeat older than 60s are set back to `queued`.
 - Cancel: client sets `status='cancelled'`; the run's `AbortController` is checked between tool calls.

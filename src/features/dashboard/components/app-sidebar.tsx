@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { Coins, Globe, LayoutTemplate, LogOut, PanelLeft, Plus, Search, X } from 'lucide-react'
 import { Logo, LogoMark } from '~/components/brand/logo'
 import { cn } from '~/lib/utils/cn'
-import type { SiteSummary } from '../types'
+import type { ProjectSummary } from '~/features/projects/types'
 
 const itemClass =
   'flex h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink lg:h-10'
@@ -15,7 +15,7 @@ const FILTER_THRESHOLD = 6
 
 type AppSidebarProps = {
   email: string
-  sites: SiteSummary[]
+  projects: ProjectSummary[]
   collapsed: boolean
   open: boolean
   closeButtonRef: RefObject<HTMLButtonElement | null>
@@ -28,7 +28,7 @@ type AppSidebarProps = {
 
 export function AppSidebar({
   email,
-  sites,
+  projects,
   collapsed,
   open,
   closeButtonRef,
@@ -42,8 +42,8 @@ export function AppSidebar({
   const name = email.split('@')[0] || 'You'
   const q = query.trim().toLowerCase()
   const visible = useMemo(
-    () => (q ? sites.filter((s) => s.name.toLowerCase().includes(q)) : sites),
-    [sites, q],
+    () => (q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects),
+    [projects, q],
   )
   // Labels hide when the desktop sidebar is collapsed to icons.
   const label = collapsed ? 'lg:hidden' : undefined
@@ -131,7 +131,7 @@ export function AppSidebar({
 
       <div className={cn('mt-6 flex min-h-0 flex-1 flex-col', collapsed && 'lg:hidden')}>
         <h2 className="mb-1 px-3 text-xs font-medium text-faint">Your sites</h2>
-        {sites.length > FILTER_THRESHOLD && (
+        {projects.length > FILTER_THRESHOLD && (
           <label className="mx-1 mb-2 flex h-9 items-center gap-2 rounded-lg border bg-ink/[0.03] px-2.5 text-dim">
             <Search className="h-4 w-4 shrink-0" aria-hidden />
             <span className="sr-only">Filter sites</span>
@@ -144,12 +144,27 @@ export function AppSidebar({
           </label>
         )}
         <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain">
-          {visible.map((site) => (
-            <li key={site.id}>
-              <button type="button" onClick={onClose} className={cn(itemClass, 'min-w-0')}>
+          {visible.map((project) => (
+            <li key={project.id}>
+              <Link
+                to="/project/$projectId"
+                params={{ projectId: project.id }}
+                onClick={onClose}
+                className={cn(itemClass, 'min-w-0')}
+                activeProps={{ className: 'bg-ink/[0.07] text-ink' }}
+              >
                 <LayoutTemplate className="h-4 w-4 shrink-0" aria-hidden />
-                <span className="truncate">{site.name}</span>
-              </button>
+                <span className="truncate">{project.name}</span>
+                {project.status !== 'ready' && (
+                  <span
+                    title={project.status === 'failed' ? 'Setup failed' : 'Setting up'}
+                    className={cn(
+                      'ml-auto h-1.5 w-1.5 shrink-0 rounded-full',
+                      project.status === 'failed' ? 'bg-danger' : 'animate-pulse bg-signal',
+                    )}
+                  />
+                )}
+              </Link>
             </li>
           ))}
           {visible.length === 0 && (

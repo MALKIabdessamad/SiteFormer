@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { ArrowUp, Loader2 } from 'lucide-react'
+import { PROMPT_MAX_LENGTH as MAX_LENGTH } from '~/features/projects/lib/constants'
 import { storage } from '~/lib/utils/storage'
 
 export type PromptBoxHandle = {
@@ -13,7 +14,6 @@ type PromptBoxProps = {
   ref?: Ref<PromptBoxHandle>
 }
 
-const MAX_LENGTH = 4000
 const MAX_HEIGHT = 220
 const DRAFT_KEY = 'siteform:draft'
 

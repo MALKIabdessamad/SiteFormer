@@ -1,0 +1,125 @@
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { Spinner } from '~/components/ui/spinner'
+import { useRedirectOnSignOut } from '~/features/auth'
+import { cn } from '~/lib/utils/cn'
+import { toErrorMessage } from '~/lib/utils/errors'
+import { deleteProject, openProject, retryProject } from '../api/projects.functions'
+import { useProject } from '../hooks/use-projects'
+import { ChatPanel } from './chat-panel'
+import { PreviewPanel } from './preview-panel'
+
+/** Workspace for one project: chat on the left, live preview on the right. */
+export function ProjectScreen({ projectId }: { projectId: string }) {
+  const navigate = useNavigate()
+  const { status, project, refresh } = useProject(projectId)
+  const [mobileView, setMobileView] = useState<'chat' | 'preview'>('chat')
+  const [busy, setBusy] = useState<'retry' | 'delete' | null>(null)
+  const [error, setError] = useState('')
+
+  useRedirectOnSignOut()
+
+  // Opening the page resumes an interrupted setup, or wakes a sleeping sandbox.
+  useEffect(() => {
+    openProject({ data: { projectId } }).catch((err: unknown) =>
+      console.warn('[project] open failed:', toErrorMessage(err)),
+    )
+  }, [projectId])
+
+  const retry = async () => {
+    setBusy('retry')
+    setError('')
+    try {
+      await retryProject({ data: { projectId } })
+      await refresh() // show "Setting up" right away, without waiting for Realtime/polling
+    } catch (err) {
+      setError(toErrorMessage(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const remove = async () => {
+    if (!window.confirm('Delete this project and its sandbox? This can’t be undone.')) return
+    setBusy('delete')
+    setError('')
+    try {
+      await deleteProject({ data: { projectId } })
+      await navigate({ to: '/dashboard', replace: true })
+    } catch (err) {
+      setError(toErrorMessage(err))
+      setBusy(null)
+    }
+  }
+
+  if (status === 'loading') {
+    return (
+      <main className="grid h-dvh place-items-center bg-paper">
+        <Spinner label="Loading project" />
+      </main>
+    )
+  }
+
+  if (!project) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-paper px-5 text-center">
+        <div>
+          <h1 className="font-display text-3xl font-extrabold tracking-[-0.03em]">
+            {status === 'missing' ? 'Project not found' : 'Couldn’t load this project'}
+          </h1>
+          <p className="mt-2 text-dim">
+            {status === 'missing'
+              ? 'It may have been deleted, or it belongs to another account.'
+              : 'Check your connection and try again.'}
+          </p>
+          <Link
+            to="/dashboard"
+            className="mt-6 inline-flex h-11 btn-sculpted items-center rounded-full px-6 text-sm font-semibold"
+          >
+            Back to dashboard
+          </Link>
+        </div>
+      </main>
+    )
+  }
+
+  return (
+    <div className="flex h-dvh min-h-0 bg-sidebar pt-[env(safe-area-inset-top)] text-ink md:p-2 md:pl-0">
+      <div
+        className={cn(
+          'min-h-0 w-full flex-col md:flex md:w-[360px] md:shrink-0',
+          mobileView === 'chat' ? 'flex' : 'hidden',
+        )}
+      >
+        <ChatPanel
+          project={project}
+          deleting={busy === 'delete'}
+          onDelete={() => void remove()}
+          onShowPreview={() => setMobileView('preview')}
+        />
+      </div>
+      <div
+        className={cn(
+          'min-h-0 min-w-0 flex-1 flex-col md:flex',
+          mobileView === 'preview' ? 'flex' : 'hidden',
+        )}
+      >
+        <PreviewPanel
+          project={project}
+          retrying={busy === 'retry'}
+          onRetry={() => void retry()}
+          onShowChat={() => setMobileView('chat')}
+        />
+      </div>
+      {error && (
+        <p
+          role="alert"
+          onClick={() => setError('')}
+          className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-1/2 z-50 max-w-[calc(100%-2rem)] -translate-x-1/2 rise cursor-pointer rounded-full border border-danger/30 bg-raised px-4 py-2 text-sm text-danger shadow-xl"
+        >
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
