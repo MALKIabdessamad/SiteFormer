@@ -1,4 +1,5 @@
 import { serverEnv } from '../env.server'
+import { BROWSER_BACKGROUND_INSTALL } from './browser-install'
 import {
   createInstance,
   ensurePublicUrl,
@@ -121,6 +122,8 @@ async function provision(target: ProvisionTarget): Promise<void> {
   await waitForPreview(sandboxId, 120_000)
   previewUrl ??= await ensurePublicUrl(sandboxId, previewPort())
   await target.save({ preview_url: previewUrl, status: 'ready', error: null })
+  // Get the agent's browser ready in the background (never blocks or fails the setup).
+  void exec(sandboxId, BROWSER_BACKGROUND_INSTALL, 30_000).catch(() => undefined)
 }
 
 /** Wakes a ready sandbox and makes sure its dev server is up (e.g. after a sandbox restart). */

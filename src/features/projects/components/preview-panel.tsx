@@ -8,14 +8,23 @@ const iconButton =
 
 type PreviewPanelProps = {
   project: Project
+  /** Changes when the preview should reload (a run finished, a restore happened). */
+  reloadSignal: number
   retrying: boolean
   onRetry: () => void
   onShowChat: () => void
 }
 
 /** Live preview of the sandbox's dev server, or the setup state while it isn't ready. */
-export function PreviewPanel({ project, retrying, onRetry, onShowChat }: PreviewPanelProps) {
-  const [reloadKey, setReloadKey] = useState(0)
+export function PreviewPanel({
+  project,
+  reloadSignal,
+  retrying,
+  onRetry,
+  onShowChat,
+}: PreviewPanelProps) {
+  const [manualReloads, setReloadKey] = useState(0)
+  const reloadKey = `${reloadSignal}:${manualReloads}`
   const url = project.status === 'ready' ? project.preview_url : null
 
   return (

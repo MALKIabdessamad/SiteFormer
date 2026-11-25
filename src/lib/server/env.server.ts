@@ -37,6 +37,14 @@ const schema = z.object({
     .string()
     .regex(/^[\w./-]+$/)
     .optional(),
+  /** OpenRouter model of the coding agent (needs tool calling; images-in for screenshots). */
+  AGENT_MODEL: z.string().min(3).default('z-ai/glm-5.3-flash'),
+  /** How hard the agent thinks per call: off | low | medium | high. */
+  AGENT_REASONING: z.enum(['off', 'low', 'medium', 'high']).default('medium'),
+  /** Safety cap on model turns per run (runaway protection; there is no time limit). */
+  AGENT_MAX_STEPS: z.coerce.number().int().min(10).max(1000).default(150),
+  /** Context budget: older tool output is trimmed, then old turns summarized, above this. */
+  AGENT_CONTEXT_TOKENS: z.coerce.number().int().min(20_000).max(900_000).default(90_000),
   /** Cap on projects (= sandboxes) per user. */
   MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(20),
 })

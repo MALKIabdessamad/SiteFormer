@@ -11,7 +11,7 @@ app is deployed to Railway.
 | `/`            | Auth: sign in, create account (`?mode=signup`), forgot password           |
 | `/?reset=1`    | Where password-reset emails land: set a new password, then → `/dashboard` |
 | `/dashboard`   | Signed-in home: your projects + "What site are we building today?"        |
-| `/project/$id` | Project workspace: queued prompt (agent mocked for now) + live preview    |
+| `/project/$id` | Project workspace: the AI coding agent's chat + live preview              |
 
 Signed-in users who open `/` go to `/dashboard`; signed-out users who open `/dashboard` go to `/`.
 
@@ -28,13 +28,49 @@ Signed-in users who open `/` go to `/dashboard`; signed-out users who open `/das
 
 - The **starter** is cloned from [`MALKIabdessamad/app`](https://github.com/MALKIabdessamad/app)
   into `/home/node/site` with fresh git history (so the agent can checkpoint later).
-- The **prompt stays queued** on the project until the AI agent (next phase) runs it.
+- The **prompt is queued as the agent's first run** and starts as soon as the sandbox is ready.
 - The project page updates live through **Supabase Realtime** (plus polling while setting up).
 - Setup is **idempotent**: an interrupted setup (deploy, crash) resumes when the project page is
   opened; a failed one shows the reason and a _Try again_ button.
 - Opening a ready project **wakes** its sandbox (it auto-sleeps after 30 min idle) and makes sure
   the dev server runs. Deleting a project deletes its sandbox first.
 - The AI agent runs **on our server, never inside the sandbox** (see `docs/plan-sandbox-agent.md`).
+
+## The AI coding agent
+
+`z-ai/glm-5.3-flash` (OpenRouter, via TanStack AI) edits the project inside its sandbox with tools.
+The agent runs **on our server, never inside the sandbox**; the sandbox only executes commands.
+
+```
+browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server process, not the HTTP request)
+   ▲                                          │ chat(): tools + memory + compaction + persistence
+   └──GET ?runId=&offset= (replay + follow)── run log (memoryStream) ◀── every chunk
+```
+
+- **Survives refresh / tab close.** The run is driven by the server; the browser only watches.
+  `useChat({ persistence: true })` hydrates the transcript (`GET ?threadId=`) and re-joins the
+  live run log on mount. The transcript is saved after **every tool round**.
+- **Survives deploys.** On boot, `server.ts` resumes runs left `queued`/`running` (interrupted
+  tool calls are closed out so the model can redo them). Opening a project also self-heals.
+- **No time limit.** Only safety caps: `AGENT_MAX_STEPS` model turns per run, per-command
+  timeouts inside the sandbox. The user can press **Stop** at any time.
+- **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
+  checkpoint card: _Undo these changes_ / _Restore to here_. A restore is a new commit (undoable)
+  and adds a note to the transcript so the model knows.
+- **Tools:** `update_plan`, `list_files`, `read_file`, `search_code`, `write_file`, `edit_file`
+  (exact, with safe fallbacks for quote/escape/indent slips), `delete_path`, `move_path`,
+  `run_command`, `restart_dev_server`, `read_dev_logs`, `check_project` (types + preview + dev
+  errors), `screenshot`, `inspect_page`, `interact` (headless Chromium **in the sandbox**,
+  installed without root), `fetch_url`, `remember`, `forget_memory`.
+- **Memory** (`@tanstack/ai-memory`, Supabase adapter): the agent saves durable facts with
+  `remember` (no extra model call per turn); up to 8 relevant memories are recalled each turn.
+- **Token-light:** stable system prompt (provider prompt cache; ~85% of input tokens were cached
+  in tests), windowed reads, capped outputs, find/replace edits, screenshots sent to the model
+  once and never stored in the transcript, compaction (`clearToolResults` → `summarizeOldest`)
+  above `AGENT_CONTEXT_TOKENS` with checkpoints saved in `agent_metadata`.
+
+Code: `src/lib/server/agent/` (runner, tools, persistence, memory, prompt, http) and
+`src/features/agent/` (chat UI).
 
 ## Stack
 
@@ -65,7 +101,7 @@ src/
 │   └── projects/            # Projects + sandboxes
 │       ├── api/             # projects.functions.ts (server fns: create/open/retry/delete)
 │       │                    # projects.queries.ts (browser reads under RLS + Realtime)
-│       ├── components/      # ProjectScreen, ChatPanel (agent mocked), PreviewPanel
+│       ├── components/      # ProjectScreen, ChatPanel, PreviewPanel
 │       ├── hooks/           # useProjects, useProject (live)
 │       └── lib/             # project-name.ts (sanitising), constants
 ├── components/
@@ -122,12 +158,18 @@ needs them.
 
 `supabase/migrations/` holds the schema (already applied to the SiteFormer project):
 
-| Table      | Columns                                                                                                                                      |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `projects` | `id`, `user_id`, `name`, `prompt` (queued), `status` (`provisioning` · `ready` · `failed`), `sandbox_id`, `preview_url`, `error`, timestamps |
+| Table                       | Columns                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `projects`                  | `id`, `user_id`, `name`, `prompt`, `status` (`provisioning` · `ready` · `failed`), `sandbox_id`, `preview_url`, `error`, timestamps                                                        |
+| `agent_runs`                | One per user message (the queue): `prompt`, `status` (`queued` → `running` → `completed`/`failed`/`aborted`), `checkpoint_before`/`after`, `files_changed`, `record` (usage, cost, errors) |
+| `agent_threads`             | The transcript, one row per project (server-only)                                                                                                                                          |
+| `agent_metadata`            | Compaction checkpoints (server-only)                                                                                                                                                       |
+| `agent_memories`            | What the agent remembers (`project_id` null = user-wide preference)                                                                                                                        |
+| Storage `agent-screenshots` | Private bucket; owners read via signed URLs                                                                                                                                                |
 
-RLS: signed-in users can only `select` their own rows; `insert/update/delete` are revoked from
-browser roles. The table is in the `supabase_realtime` publication.
+RLS: browsers can only `select` their own `projects`, `agent_runs` and `agent_memories`; the
+transcript and metadata are server-only; all writes go through the server (secret key).
+`projects` and `agent_runs` are in the `supabase_realtime` publication.
 
 ## Deploy to Railway
 

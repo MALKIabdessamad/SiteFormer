@@ -1,27 +1,32 @@
 /**
  * Server functions for the project lifecycle. They run on the server as the verified user and are
  * the only code that writes `projects` (with the secret key). Reads happen in the browser under
- * Row Level Security (see projects.queries.ts).
+ * Row Level Security (see projects.queries.ts). Chat messages go through /api/agent.
  */
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { restoreCheckpoint } from '~/lib/server/agent/checkpoints.server'
+import { getRunRow } from '~/lib/server/agent/persistence.server'
+import {
+  appendAssistantNote,
+  enqueueRun,
+  hasActiveRun,
+  newRunId,
+  recoverRuns,
+  stopProjectRuns,
+} from '~/lib/server/agent/runner.server'
+import type { SandboxSession } from '~/lib/server/agent/sandbox-session.server'
 import { generateProjectName } from '~/lib/server/ai/naming.server'
-import { requireUser } from '~/lib/server/require-user'
 import { serverEnv } from '~/lib/server/env.server'
 import { AppError, safely } from '~/lib/server/errors.server'
-import { validate } from '~/lib/server/validate'
+import { ownedProject, provisionTarget, saveProject } from '~/lib/server/projects.server'
+import { requireUser } from '~/lib/server/require-user'
 import { deleteInstance } from '~/lib/server/sandbox/agent37.server'
-import {
-  ensureProvisioned,
-  ensureRunning,
-  isBusy,
-  type ProvisionTarget,
-  type SandboxPatch,
-} from '~/lib/server/sandbox/provision.server'
+import { ensureProvisioned, ensureRunning, isBusy } from '~/lib/server/sandbox/provision.server'
 import { supabaseAdmin } from '~/lib/server/supabase-admin.server'
+import { validate } from '~/lib/server/validate'
 import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from '../lib/constants'
 import { nameFromPrompt } from '../lib/project-name'
-import type { Project } from '../types'
 
 const ProjectIdInput = validate(z.object({ projectId: z.uuid('Project not found.') }))
 
@@ -35,40 +40,21 @@ const CreateInput = validate(
   }),
 )
 
-type OwnedProject = Pick<Project, 'id' | 'user_id' | 'status' | 'sandbox_id'>
+const RestoreInput = validate(
+  z.object({
+    projectId: z.uuid('Project not found.'),
+    runId: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/, 'Checkpoint not found.'),
+    point: z.enum(['before', 'after']),
+  }),
+)
 
-async function ownedProject(userId: string, projectId: string): Promise<OwnedProject> {
-  const { data, error } = await supabaseAdmin()
-    .from('projects')
-    .select('id, user_id, status, sandbox_id')
-    .eq('id', projectId)
-    .eq('user_id', userId)
-    .maybeSingle<OwnedProject>()
-  if (error) throw error
-  if (!data) throw new AppError('Project not found.', 'not_found')
-  return data
-}
-
-async function saveProject(projectId: string, patch: SandboxPatch | { name: string }) {
-  const { error } = await supabaseAdmin().from('projects').update(patch).eq('id', projectId)
-  if (error) throw new Error(`Could not save project ${projectId}: ${error.message}`)
-}
-
-function target(project: OwnedProject): ProvisionTarget {
-  return {
-    projectId: project.id,
-    userId: project.user_id,
-    sandboxId: project.sandbox_id,
-    save: (patch) => saveProject(project.id, patch),
-  }
-}
-
-/** Fire-and-forget: errors are already recorded on the project row by the job itself. */
+/** Fire-and-forget: errors are already recorded (project row / run row) by the job itself. */
 const background = (job: Promise<unknown>) => void job.catch(() => undefined)
 
 /**
  * Creates a project from the user's first prompt and returns immediately. In the background the
- * AI names it and its sandbox is created; the prompt stays queued until the agent runs it.
+ * AI names it, its sandbox is created, and the prompt is queued as the agent's first run (it
+ * starts as soon as the sandbox is ready).
  */
 export const createProject = createServerFn({ method: 'POST' })
   .middleware([requireUser])
@@ -94,19 +80,21 @@ export const createProject = createServerFn({ method: 'POST' })
       const { data: project, error } = await db
         .from('projects')
         .insert({ user_id: userId, name: nameFromPrompt(data.prompt), prompt: data.prompt })
-        .select('id, user_id, status, sandbox_id')
-        .single<OwnedProject>()
+        .select('id, user_id, sandbox_id')
+        .single<{ id: string; user_id: string; sandbox_id: string | null }>()
       if (error) throw error
 
+      await enqueueRun({ runId: newRunId(), projectId: project.id, userId, prompt: data.prompt })
       background(generateProjectName(data.prompt).then((name) => saveProject(project.id, { name })))
-      background(ensureProvisioned(target(project)))
+      background(ensureProvisioned(provisionTarget(project)))
       return { id: project.id }
     }),
   )
 
 /**
- * Called when a project page opens. Resumes an interrupted setup (e.g. after a deploy) or wakes a
- * ready sandbox and makes sure its preview server runs. Failed setups only restart via `retry`.
+ * Called when a project page opens. Resumes an interrupted setup (e.g. after a deploy), wakes a
+ * ready sandbox and its preview server, and resumes agent runs a restart left unfinished.
+ * Failed setups only restart via `retryProject`.
  */
 export const openProject = createServerFn({ method: 'POST' })
   .middleware([requireUser])
@@ -114,14 +102,15 @@ export const openProject = createServerFn({ method: 'POST' })
   .handler(({ data, context }) =>
     safely('openProject', async () => {
       const project = await ownedProject(context.user.id, data.projectId)
+      background(recoverRuns(project.id))
       if (isBusy(project.id)) return { ok: true }
-      if (project.status === 'provisioning') background(ensureProvisioned(target(project)))
-      if (project.status === 'ready') background(ensureRunning(target(project)))
+      if (project.status === 'provisioning') background(ensureProvisioned(provisionTarget(project)))
+      if (project.status === 'ready') background(ensureRunning(provisionTarget(project)))
       return { ok: true }
     }),
   )
 
-/** Retries a failed setup. Reuses the sandbox when it still exists. */
+/** Retries a failed setup. Reuses the sandbox when it still exists. A queued message then runs. */
 export const retryProject = createServerFn({ method: 'POST' })
   .middleware([requireUser])
   .validator(ProjectIdInput)
@@ -130,18 +119,60 @@ export const retryProject = createServerFn({ method: 'POST' })
       const project = await ownedProject(context.user.id, data.projectId)
       if (project.status !== 'failed' || isBusy(project.id)) return { ok: true }
       await saveProject(project.id, { status: 'provisioning', error: null })
-      background(ensureProvisioned(target(project)))
+      background(ensureProvisioned(provisionTarget(project)))
       return { ok: true }
     }),
   )
 
-/** Deletes the project and its sandbox. */
+/**
+ * Restores the project to a checkpoint of one of its runs: the state right `before` the run or
+ * right `after` it. The restore is itself a new commit, so it can be undone the same way.
+ */
+export const restoreProject = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(RestoreInput)
+  .handler(({ data, context }) =>
+    safely('restoreProject', async () => {
+      const project = await ownedProject(context.user.id, data.projectId)
+      const run = await getRunRow(data.runId)
+      if (!run || run.project_id !== project.id)
+        throw new AppError('Checkpoint not found.', 'not_found')
+      const sha = data.point === 'before' ? run.checkpoint_before : run.checkpoint_after
+      if (!sha) throw new AppError('This message has no checkpoint.', 'not_found')
+      if (project.status !== 'ready' || !project.sandbox_id) {
+        throw new AppError('The sandbox is not ready yet.', 'unavailable')
+      }
+      if (await hasActiveRun(project.id)) {
+        throw new AppError('Stop the agent before restoring.', 'limit')
+      }
+      const session: SandboxSession = {
+        sandboxId: project.sandbox_id,
+        projectId: project.id,
+        userId: project.user_id,
+        runId: run.id,
+        signal: new AbortController().signal,
+        previewPort: serverEnv().STARTER_PORT,
+        pendingImages: [],
+        screenshotCount: 0,
+      }
+      await restoreCheckpoint(session, sha)
+      const label = run.prompt.replace(/\s+/g, ' ').slice(0, 80)
+      await appendAssistantNote(
+        project.id,
+        `↩︎ Restored the project to the checkpoint ${data.point} “${label}”. Changes made after that point were undone.`,
+      )
+      return { ok: true }
+    }),
+  )
+
+/** Deletes the project and its sandbox (stopping the agent first). */
 export const deleteProject = createServerFn({ method: 'POST' })
   .middleware([requireUser])
   .validator(ProjectIdInput)
   .handler(({ data, context }) =>
     safely('deleteProject', async () => {
       const project = await ownedProject(context.user.id, data.projectId)
+      await stopProjectRuns(project.id, context.user.id)
       // Sandbox first: if this fails the row stays, so the sandbox is never orphaned.
       if (project.sandbox_id) await deleteInstance(project.sandbox_id)
       const { error } = await supabaseAdmin().from('projects').delete().eq('id', project.id)

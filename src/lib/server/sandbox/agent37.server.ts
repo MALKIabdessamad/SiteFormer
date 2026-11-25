@@ -55,6 +55,8 @@ async function request(
     retryOn?: Set<number>
     /** Retry when no response arrives at all. Off for commands (they may still be running). */
     retryNetworkErrors?: boolean
+    /** Caller cancellation (e.g. the user pressed Stop). Never retried. */
+    signal?: AbortSignal
   } = {},
 ): Promise<Response> {
   const {
@@ -62,13 +64,19 @@ async function request(
     retries = 0,
     retryOn = RETRYABLE,
     retryNetworkErrors = true,
+    signal,
     ...rest
   } = init
   for (let attempt = 0; ; attempt++) {
     let response: Response | undefined
     try {
-      response = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) })
+      const timeout = AbortSignal.timeout(timeoutMs)
+      response = await fetch(url, {
+        ...rest,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })
     } catch (error) {
+      if (signal?.aborted) throw new SandboxError('Cancelled.')
       if (attempt >= retries || !retryNetworkErrors) {
         const reason =
           error instanceof Error && error.name === 'TimeoutError' ? 'timed out' : 'failed'
@@ -76,6 +84,7 @@ async function request(
       }
     }
     if (response && (!retryOn.has(response.status) || attempt >= retries)) return response
+    if (signal?.aborted) throw new SandboxError('Cancelled.')
     await sleep(Math.min(1000 * 2 ** attempt, 8000))
   }
 }
@@ -155,8 +164,14 @@ export async function ensurePublicUrl(id: string, port: number): Promise<string>
 }
 
 /** Runs a shell command in the sandbox (as user `node`, in /home/node). */
-export async function exec(id: string, command: string, timeoutMs = 60_000): Promise<ExecResult> {
+export async function exec(
+  id: string,
+  command: string,
+  timeoutMs = 60_000,
+  signal?: AbortSignal,
+): Promise<ExecResult> {
   const response = await request(`${EXEC_URL}/instances/${encodeURIComponent(id)}/exec`, {
+    signal,
     method: 'POST',
     headers: { 'X-Agent37-Key': serverEnv().AGENT37_API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ command }),

@@ -5,6 +5,7 @@
  * - Hands every other request to the TanStack Start handler for SSR.
  * - Exposes /healthz for Railway's health check.
  * - Adds baseline security headers and shuts down gracefully on SIGTERM.
+ * - At boot, resumes AI agent runs a previous process left unfinished (deploys/crashes).
  *
  * Build first with `bun run build`, then `bun run start`.
  */
@@ -19,6 +20,9 @@ if (!(await Bun.file(SERVER_ENTRY).exists())) {
   console.error('No build found. Run `bun run build` first.')
   process.exit(1)
 }
+
+// Per-process secret for internal calls into the app (never leaves this process).
+process.env.SITEFORMER_INTERNAL_TOKEN = crypto.randomUUID()
 
 type FetchHandler = { fetch: (request: Request) => Response | Promise<Response> }
 const app: FetchHandler = (await import(SERVER_ENTRY)).default
@@ -70,6 +74,9 @@ let stopping = false
 const server = Bun.serve({
   port: PORT,
   hostname: '0.0.0.0', // all interfaces, so Railway's proxy can reach the container
+  // Agent progress streams stay open while tools run; 255 s is Bun's maximum. Clients
+  // reconnect and resume (Last-Event-ID) if a connection is ever closed.
+  idleTimeout: 255,
   async fetch(request) {
     const { pathname } = new URL(request.url)
 
@@ -100,8 +107,24 @@ async function shutdown(signal: string) {
   if (stopping) return
   stopping = true
   console.log(`${signal} received, shutting down`)
+  // Let normal requests finish, then close the long-lived agent streams (clients resume them
+  // on the new instance; unfinished runs are resumed by its boot recovery).
+  const forceClose = setTimeout(() => void server.stop(true), 5000)
   await server.stop()
+  clearTimeout(forceClose)
   process.exit(0)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
+
+// Resume agent runs left unfinished by the previous process.
+void Promise.resolve(
+  app.fetch(
+    new Request(`http://localhost:${PORT}/api/agent?action=recover`, {
+      method: 'POST',
+      headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
+    }),
+  ),
+)
+  .then(async (res) => console.log('[agent] boot recovery:', res.status, await res.text()))
+  .catch((err) => console.error('[agent] boot recovery failed', err))
 process.on('SIGINT', () => void shutdown('SIGINT'))

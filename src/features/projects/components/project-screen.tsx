@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
+import { useAgentRuns } from '~/features/agent'
 import { useRedirectOnSignOut } from '~/features/auth'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
@@ -17,8 +18,27 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [mobileView, setMobileView] = useState<'chat' | 'preview'>('chat')
   const [busy, setBusy] = useState<'retry' | 'delete' | null>(null)
   const [error, setError] = useState('')
+  const { runs, activeRun, refresh: refreshRuns } = useAgentRuns(projectId)
+  const [chatKey, setChatKey] = useState(0)
+  const [previewKey, setPreviewKey] = useState(0)
 
   useRedirectOnSignOut()
+
+  // Reload the preview whenever a run finishes (its changes are in place).
+  const finishedRuns = runs.filter((r) => r.finished_at).length
+  const seenFinished = useRef<number | null>(null)
+  useEffect(() => {
+    if (seenFinished.current !== null && finishedRuns > seenFinished.current)
+      setPreviewKey((k) => k + 1)
+    seenFinished.current = finishedRuns
+  }, [finishedRuns])
+
+  const reconnectChat = useCallback(() => setChatKey((k) => k + 1), [])
+  const afterRestore = useCallback(() => {
+    setChatKey((k) => k + 1) // show the restore note
+    setPreviewKey((k) => k + 1)
+    void refreshRuns()
+  }, [refreshRuns])
 
   // Tab title follows the live name (the AI renames the project a moment after creation).
   const name = project?.name
@@ -99,9 +119,15 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       >
         <ChatPanel
           project={project}
+          runs={runs}
+          activeRun={activeRun}
+          chatKey={chatKey}
           deleting={busy === 'delete'}
           onDelete={() => void remove()}
           onShowPreview={() => setMobileView('preview')}
+          onRestored={afterRestore}
+          onConnectionLost={reconnectChat}
+          onActivity={refreshRuns}
         />
       </div>
       <div
@@ -112,6 +138,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       >
         <PreviewPanel
           project={project}
+          reloadSignal={previewKey}
           retrying={busy === 'retry'}
           onRetry={() => void retry()}
           onShowChat={() => setMobileView('chat')}

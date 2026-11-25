@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, ArrowUp, Clock, Eye, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, Trash2 } from 'lucide-react'
+import { AgentChat, type AgentRun } from '~/features/agent'
 import type { Project } from '../types'
 import { StatusLine } from './status-dot'
 
@@ -9,16 +10,31 @@ const iconButton =
 
 type ChatPanelProps = {
   project: Project
+  runs: Array<AgentRun>
+  activeRun: AgentRun | undefined
+  /** Bumped to remount the chat (fresh hydrate + rejoin). */
+  chatKey: number
   deleting: boolean
   onDelete: () => void
   onShowPreview: () => void
+  onRestored: () => void
+  onConnectionLost: () => void
+  onActivity: () => void
 }
 
-/**
- * Conversation column. The AI agent isn't connected yet: the first prompt is shown as queued and
- * the composer is disabled. The agent will consume the queued prompt once it exists.
- */
-export function ChatPanel({ project, deleting, onDelete, onShowPreview }: ChatPanelProps) {
+/** Conversation column: project header + the coding agent's chat. */
+export function ChatPanel({
+  project,
+  runs,
+  activeRun,
+  chatKey,
+  deleting,
+  onDelete,
+  onShowPreview,
+  onRestored,
+  onConnectionLost,
+  onActivity,
+}: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   return (
@@ -98,72 +114,15 @@ export function ChatPanel({ project, deleting, onDelete, onShowPreview }: ChatPa
         </div>
       )}
 
-      <ol className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <li className="flex flex-col items-end gap-1.5">
-          <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-3 text-sm break-words whitespace-pre-wrap">
-            {project.prompt}
-          </div>
-          <span className="inline-flex items-center gap-1 text-[11px] text-faint">
-            <Clock className="h-3 w-3" aria-hidden />
-            Queued
-          </span>
-        </li>
-        <li>
-          <AgentNote status={project.status} />
-        </li>
-      </ol>
-
-      <div className="shrink-0 p-3">
-        <div className="flex items-end gap-2 rounded-3xl p-2.5 opacity-70 box-sculpted">
-          <label htmlFor="chat-input" className="sr-only">
-            Message
-          </label>
-          <textarea
-            id="chat-input"
-            rows={1}
-            disabled
-            placeholder="The AI agent is coming soon…"
-            className="block max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
-          />
-          <button
-            type="button"
-            disabled
-            aria-label="Send"
-            className="grid h-10 w-10 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+      <AgentChat
+        key={chatKey}
+        project={project}
+        runs={runs}
+        activeRun={activeRun}
+        onRestored={onRestored}
+        onConnectionLost={onConnectionLost}
+        onActivity={onActivity}
+      />
     </section>
-  )
-}
-
-function AgentNote({ status }: { status: Project['status'] }) {
-  const notes: Record<Project['status'], ReactNode> = {
-    provisioning: (
-      <>
-        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-signal" aria-hidden />
-        Setting up your sandbox. Your prompt is queued and will run as soon as it’s ready.
-      </>
-    ),
-    ready: (
-      <>
-        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-signal" aria-hidden />
-        Your sandbox is ready with the starter app. The AI agent isn’t connected yet, so your prompt
-        stays queued.
-      </>
-    ),
-    failed: (
-      <>
-        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-danger" aria-hidden />
-        The sandbox couldn’t be set up. Retry from the preview panel; your prompt is still queued.
-      </>
-    ),
-  }
-  return (
-    <div className="flex w-fit max-w-[95%] gap-2.5 rounded-2xl rounded-bl-md border bg-ink/[0.03] px-4 py-3 text-sm text-dim">
-      {notes[status]}
-    </div>
   )
 }
