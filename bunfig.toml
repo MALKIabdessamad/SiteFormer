@@ -1,0 +1,5 @@
+[install]
+# Commit a readable bun.lock instead of a binary lockfile.
+saveTextLockfile = true
+# Supply-chain guard: skip package versions published less than a day ago.
+minimumReleaseAge = 86400
