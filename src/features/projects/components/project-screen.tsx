@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
-import { useAgentRuns } from '~/features/agent'
+import { isSettledRun, useAgentRuns } from '~/features/agent'
 import { useRedirectOnSignOut } from '~/features/auth'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
@@ -24,8 +24,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
 
   useRedirectOnSignOut()
 
-  // Reload the preview whenever a run finishes (its changes are in place).
-  const finishedRuns = runs.filter((r) => r.finished_at).length
+  // Reload the preview whenever a run settles (its changes are committed and in place).
+  const finishedRuns = runs.filter(isSettledRun).length
   const seenFinished = useRef<number | null>(null)
   useEffect(() => {
     if (seenFinished.current !== null && finishedRuns > seenFinished.current)

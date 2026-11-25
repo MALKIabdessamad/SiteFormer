@@ -21,6 +21,18 @@ const ACTIVE_POLL_MS = 4000
 export const isActiveRun = (run: AgentRun | undefined) =>
   run?.status === 'queued' || run?.status === 'running'
 
+/**
+ * A run is settled once it ended AND its after-run checkpoint is written (that happens a few
+ * seconds after the status turns terminal). If checkpointing failed, it counts as settled 30 s
+ * after finishing, so the UI never waits forever.
+ */
+export const isSettledRun = (run: AgentRun | undefined) =>
+  Boolean(run) &&
+  !isActiveRun(run) &&
+  (Boolean(run!.checkpoint_after) ||
+    !run!.checkpoint_before ||
+    (run!.finished_at !== null && Date.now() - Date.parse(run!.finished_at) > 30_000))
+
 /** The project's agent runs (oldest first), kept live with Realtime (RLS: own runs only). */
 export function useAgentRuns(projectId: string) {
   const [runs, setRuns] = useState<Array<AgentRun>>([])
@@ -54,14 +66,15 @@ export function useAgentRuns(projectId: string) {
     return () => void supabase.removeChannel(channel)
   }, [projectId, refresh])
 
-  // Fallback while a run is active, in case Realtime is unavailable (status/checkpoints update anyway).
+  // Poll until every run is settled, in case Realtime is unavailable (status and checkpoints
+  // still update).
   const activeRun = runs.find(isActiveRun)
-  const hasActive = Boolean(activeRun)
+  const unsettled = runs.some((run) => !isSettledRun(run))
   useEffect(() => {
-    if (!hasActive) return
+    if (!unsettled) return
     const timer = setInterval(() => void refresh(), ACTIVE_POLL_MS)
     return () => clearInterval(timer)
-  }, [hasActive, refresh])
+  }, [unsettled, refresh])
 
   return { runs, activeRun, refresh }
 }

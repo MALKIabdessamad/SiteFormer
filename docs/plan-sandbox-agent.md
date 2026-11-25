@@ -1,7 +1,8 @@
 # Plan: projects, sandboxes and the vibe-coding agent
 
-Status: **projects table, sandbox provisioning and AI naming are built** (see README →
-“How a project is created”). The `runs`/`messages`/`memories` tables and the agent are next.
+Status: **built.** Projects, sandboxes, AI naming and the coding agent (runner, tools, memory,
+persistence, checkpoints, chat UI) are implemented; see README → “The AI coding agent”. MCP
+servers are the next phase.
 
 Sources: the working code in `MALKIabdessamad/siteform` (Agent37 client, agent loop, naming)
 and the npm READMEs of `@tanstack/ai*` (the agent37.com and tanstack.com docs could not be

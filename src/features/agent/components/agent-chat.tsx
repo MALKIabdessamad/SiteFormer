@@ -3,7 +3,7 @@ import { ArrowUp, ChevronRight, Loader2, Square } from 'lucide-react'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '~/features/projects/types'
 import { useAgentChat } from '../hooks/use-agent-chat'
-import type { AgentRun } from '../hooks/use-agent-runs'
+import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns } from '../lib/turns'
 import { CheckpointCard } from './checkpoint-card'
 import { Markdown } from './markdown'
@@ -96,7 +96,7 @@ export function AgentChat({
             turn.user !== null
               ? runs[turns.slice(0, index).filter((t) => t.user !== null).length]
               : undefined
-          const finished = run && !['queued', 'running'].includes(run.status)
+          const finished = isSettledRun(run)
           return (
             <li key={turn.key} className="space-y-2">
               {turn.user !== null && (
