@@ -89,6 +89,7 @@ export function shellTools(session: SandboxSession) {
       )
     }
     const result = await sh(session, command, { timeoutSeconds })
+    session.workspaceVersion += 1 // a command may have changed files (installs, codegen…)
     return {
       exitCode: result.exitCode,
       stdout: capText(result.stdout, OUTPUT_MAX),
@@ -126,6 +127,13 @@ export function shellTools(session: SandboxSession) {
       'server errors. Run after edits and before you finish. Optionally run ESLint too.',
     inputSchema: z.object({ lint: z.boolean().optional() }),
   }).server(async ({ lint = false }) => {
+    // Nothing changed since the last check: don't spend ~10 s re-running it.
+    if (!lint && session.lastCheck?.version === session.workspaceVersion) {
+      return {
+        ...session.lastCheck.result,
+        note: 'No files changed since the last check; same result.',
+      }
+    }
     const port = session.previewPort
     const script = [
       `echo "== typecheck"; bunx --bun tsc --noEmit -p . 2>&1 | head -60; echo "exit=\${PIPESTATUS[0]}"`,
@@ -143,7 +151,7 @@ export function shellTools(session: SandboxSession) {
     const lintOut = lint ? section('lint') : ''
     const preview = section('preview').split('\n')[0] ?? '000'
     const devErrors = section('devlog')
-    return {
+    const outcome = {
       typecheck: typeOk ? 'passed' : 'failed',
       ...(typeOk ? {} : { typeErrors: capText(typecheck.replace(/exit=\d+\s*$/, ''), 5000) }),
       ...(lint
@@ -158,6 +166,8 @@ export function shellTools(session: SandboxSession) {
           : `not answering (${preview})`,
       ...(devErrors ? { recentDevErrors: capText(devErrors, 2000) } : {}),
     }
+    if (!lint) session.lastCheck = { version: session.workspaceVersion, result: outcome }
+    return outcome
   })
 
   const fetchUrl = toolDefinition({

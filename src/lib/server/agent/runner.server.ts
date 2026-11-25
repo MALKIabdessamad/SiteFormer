@@ -38,7 +38,7 @@ import { supabaseMemory } from './memory.server'
 import { loggingMiddleware, progressSaverMiddleware, visionMiddleware } from './middleware.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
 import { runContext, SYSTEM_PROMPT } from './prompt.server'
-import type { SandboxSession } from './sandbox-session.server'
+import { createSession, type SandboxSession } from './sandbox-session.server'
 import { agentTools } from './tools/index.server'
 import { restartDevServer } from './tools/shell.server'
 
@@ -186,16 +186,14 @@ async function repairInterruptedTranscript(projectId: string) {
 }
 
 function sessionFor(row: AgentRunRow, project: ProjectRow, signal: AbortSignal): SandboxSession {
-  return {
+  return createSession({
     sandboxId: project.sandbox_id!,
     projectId: project.id,
     userId: row.user_id,
     runId: row.id,
     signal,
     previewPort: serverEnv().STARTER_PORT,
-    pendingImages: [],
-    screenshotCount: 0,
-  }
+  })
 }
 
 function agentStream(

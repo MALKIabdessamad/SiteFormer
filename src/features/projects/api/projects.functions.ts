@@ -16,7 +16,7 @@ import {
   recoverRuns,
   stopProjectRuns,
 } from '~/lib/server/agent/runner.server'
-import type { SandboxSession } from '~/lib/server/agent/sandbox-session.server'
+import { createSession } from '~/lib/server/agent/sandbox-session.server'
 import { generateProjectName } from '~/lib/server/ai/naming.server'
 import { serverEnv } from '~/lib/server/env.server'
 import { log } from '~/lib/server/log.server'
@@ -148,16 +148,14 @@ export const restoreProject = createServerFn({ method: 'POST' })
       if (await hasActiveRun(project.id)) {
         throw new AppError('Stop the agent before restoring.', 'limit')
       }
-      const session: SandboxSession = {
+      const session = createSession({
         sandboxId: project.sandbox_id,
         projectId: project.id,
         userId: project.user_id,
         runId: run.id,
         signal: new AbortController().signal,
         previewPort: serverEnv().STARTER_PORT,
-        pendingImages: [],
-        screenshotCount: 0,
-      }
+      })
       await restoreCheckpoint(session, sha)
       const label = run.prompt.replace(/\s+/g, ' ').slice(0, 80)
       await appendAssistantNote(

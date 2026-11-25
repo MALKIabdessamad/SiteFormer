@@ -177,6 +177,7 @@ export function fileTools(session: SandboxSession) {
       },
     )
     if (result.stdout.trim() !== 'ok') throw new ToolError(`Not found: ${relativePath(absolute)}`)
+    session.workspaceVersion += 1
     return { deleted: relativePath(absolute) }
   })
 
@@ -197,6 +198,7 @@ export function fileTools(session: SandboxSession) {
     if (out === 'missing') throw new ToolError(`Not found: ${relativePath(source)}`)
     if (out === 'exists') throw new ToolError(`Already exists: ${relativePath(target)}`)
     if (out !== 'ok') throw new ToolError('Move failed.')
+    session.workspaceVersion += 1
     return { moved: relativePath(source), to: relativePath(target) }
   })
 

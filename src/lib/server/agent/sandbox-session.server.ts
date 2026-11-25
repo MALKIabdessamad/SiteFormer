@@ -18,8 +18,31 @@ export type SandboxSession = {
   previewPort: number
   /** Screenshots the model should see on its next call (consumed by the vision middleware). */
   pendingImages: Array<{ mediaType: 'image/jpeg'; base64: string; caption: string }>
-  /** Count of screenshots taken this run (storage file names). */
+  /** Count of screenshots taken this run (storage file names + per-run budget). */
   screenshotCount: number
+  /** Bumped whenever a tool may have changed project files (write/edit/delete/move/command). */
+  workspaceVersion: number
+  /** Workspace version at each page+viewport's last screenshot (skip identical re-shots). */
+  screenshotVersions: Map<string, number>
+  /** Last check_project result and the workspace version it was taken at. */
+  lastCheck: { version: number; result: Record<string, unknown> } | null
+}
+
+/** Creates a session with fresh per-run bookkeeping. */
+export function createSession(
+  base: Pick<
+    SandboxSession,
+    'sandboxId' | 'projectId' | 'userId' | 'runId' | 'signal' | 'previewPort'
+  >,
+): SandboxSession {
+  return {
+    ...base,
+    pendingImages: [],
+    screenshotCount: 0,
+    workspaceVersion: 0,
+    screenshotVersions: new Map(),
+    lastCheck: null,
+  }
 }
 
 /** Tool-facing error: its message is returned to the model so it can correct itself. */
@@ -134,4 +157,5 @@ export async function writeText(session: SandboxSession, absolute: string, conte
     { timeoutSeconds: 30 },
   )
   if (done.exitCode !== 0) throw new ToolError(`Could not write ${relativePath(absolute)}.`)
+  session.workspaceVersion += 1
 }

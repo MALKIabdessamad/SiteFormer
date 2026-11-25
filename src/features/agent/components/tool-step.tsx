@@ -117,7 +117,7 @@ function describe(step: ToolStepData): { icon: ReactNode; label: ReactNode } {
 
 function failed(step: ToolStepData): string | null {
   const o = step.output
-  if (!o) return null
+  if (!o || o.skipped === true) return null
   if (typeof o.error === 'string') return o.error
   if (step.name === 'run_command' && typeof o.exitCode === 'number' && o.exitCode !== 0) {
     return `Exited with code ${o.exitCode}`
@@ -128,6 +128,14 @@ function failed(step: ToolStepData): string | null {
 
 export function ToolStep({ step }: { step: ToolStepData }) {
   if (step.name === 'update_plan') return <PlanCard steps={step.input.steps} />
+  if (step.output?.skipped === true) {
+    // The agent asked for a screenshot it didn't need (nothing changed / budget used).
+    return (
+      <p className="flex items-center gap-2 py-0.5 text-xs text-faint">
+        <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden /> Skipped a repeat screenshot
+      </p>
+    )
+  }
   const { icon, label } = describe(step)
   const error = failed(step)
   const shot = typeof step.output?.screenshot === 'string' ? step.output.screenshot : null

@@ -188,19 +188,39 @@ const viewportField = z
   .optional()
   .describe('desktop (default) = 1280×800, mobile = 390×844.')
 
+/** Screenshots per run (screenshot + interact). Each costs ~4 s plus image tokens. */
+export const MAX_SCREENSHOTS_PER_RUN = 4
+
+/** Why a screenshot should NOT be taken right now (or null when it should). */
+function screenshotRefusal(session: SandboxSession, key: string): string | null {
+  if (session.screenshotVersions.get(key) === session.workspaceVersion) {
+    return 'Not taken: no files changed since your last screenshot of this page and viewport. Reuse what you already saw.'
+  }
+  if (session.screenshotCount >= MAX_SCREENSHOTS_PER_RUN) {
+    return `Not taken: screenshot budget for this run (${MAX_SCREENSHOTS_PER_RUN}) is used up. Use inspect_page for checks, or finish.`
+  }
+  return null
+}
+
 export function browserTools(session: SandboxSession) {
   const screenshot = toolDefinition({
     name: 'screenshot',
     description:
-      'Open a page of the running site in a real browser and take a screenshot. You will SEE the ' +
-      'image on your next step, and the user sees it in the chat. Also returns console errors and ' +
-      'failed requests. Use after visual changes to verify the result (desktop, then mobile).',
+      'Screenshot a page of the running site in a real browser; you SEE the image on your next ' +
+      'step and the user sees it in the chat. Expensive (~4 s + image tokens): take ONE, after ' +
+      'you finished a visual change, not after each edit. Desktop by default; mobile only for ' +
+      `layout/responsive work. Max ${MAX_SCREENSHOTS_PER_RUN} per run; identical re-shots are ` +
+      'refused. Not for text/copy, logic or config changes (use check_project / inspect_page).',
     inputSchema: z.object({
       path: pathField,
       viewport: viewportField,
       fullPage: z.boolean().optional().describe('Capture the whole scroll height (max 4000px).'),
     }),
   }).server(async ({ path = '/', viewport = 'desktop', fullPage = false }) => {
+    const key = `${path}|${viewport}|${fullPage}`
+    const refusal = screenshotRefusal(session, key)
+    if (refusal) return { skipped: true, reason: refusal }
+    session.screenshotVersions.set(key, session.workspaceVersion)
     const result = await runBrowser(session, {
       path,
       viewport,
@@ -230,9 +250,10 @@ export function browserTools(session: SandboxSession) {
   const interact = toolDefinition({
     name: 'interact',
     description:
-      'Drive the page like a user, then screenshot the result: click, fill inputs, press keys, ' +
-      'hover, scroll, wait, or navigate. Stops at the first failing step. Use to test menus, ' +
-      'forms, modals, tabs and navigation.',
+      'Drive the page like a user: click, fill inputs, press keys, hover, scroll, wait, or ' +
+      'navigate. Stops at the first failing step and reports each step. Use only to test real ' +
+      'behaviour (menus, forms, modals, tabs, navigation). Set screenshot:true only when you ' +
+      'need to see the result (counts toward the screenshot budget).',
     inputSchema: z.object({
       path: pathField,
       viewport: viewportField,
@@ -256,26 +277,36 @@ export function browserTools(session: SandboxSession) {
         )
         .min(1)
         .max(20),
-      screenshot: z.boolean().optional().describe('Screenshot after the actions (default true).'),
+      screenshot: z.boolean().optional().describe('Screenshot after the actions (default false).'),
     }),
-  }).server(async ({ path = '/', viewport = 'desktop', actions, screenshot: wantShot = true }) => {
-    const result = await runBrowser(session, {
-      path,
-      viewport,
-      actions,
-      screenshot: wantShot,
-      outline: false,
-    })
-    const stored =
-      wantShot && result.screenshot
-        ? await keepScreenshot(
-            session,
-            result.screenshot,
-            `After interacting with ${path} (${viewport})`,
-          )
-        : null
-    return summarize(result, { screenshot: stored, viewport })
-  })
+  }).server(
+    async ({ path = '/', viewport = 'desktop', actions, screenshot: requested = false }) => {
+      const shotKey = `interact|${path}|${viewport}|${JSON.stringify(actions)}`
+      const refusal = requested ? screenshotRefusal(session, shotKey) : null
+      const wantShot = requested && !refusal
+      if (wantShot) session.screenshotVersions.set(shotKey, session.workspaceVersion)
+      const result = await runBrowser(session, {
+        path,
+        viewport,
+        actions,
+        screenshot: wantShot,
+        outline: false,
+      })
+      const stored =
+        wantShot && result.screenshot
+          ? await keepScreenshot(
+              session,
+              result.screenshot,
+              `After interacting with ${path} (${viewport})`,
+            )
+          : null
+      return summarize(result, {
+        screenshot: stored,
+        viewport,
+        ...(refusal ? { screenshotSkipped: refusal } : {}),
+      })
+    },
+  )
 
   return [screenshot, inspectPage, interact]
 }
