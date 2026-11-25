@@ -3,6 +3,7 @@
  * Every request is authenticated (Supabase access token) and ownership-checked; ids from the
  * client are never trusted on their own.
  */
+import { errorFields, log } from '../log.server'
 import {
   chatParamsFromRequestBody,
   memoryStream,
@@ -35,13 +36,13 @@ export function errorResponse(error: unknown): Response {
     return Response.json({ error: error.message, code: error.code }, { status: STATUS[error.code] })
   }
   if (error instanceof ConfigError) {
-    console.error('[agent api] misconfigured:', error.message)
+    log.error('Agent API misconfigured', { event: 'api.config_error', error: error.message })
     return Response.json(
       { error: 'The agent is not set up on the server yet.', code: 'unavailable' },
       { status: 503 },
     )
   }
-  console.error('[agent api] unexpected error', error)
+  log.error('Agent API unexpected error', { event: 'api.error', ...errorFields(error) })
   return Response.json(
     { error: 'Something went wrong. Please try again.', code: 'unavailable' },
     { status: 500 },

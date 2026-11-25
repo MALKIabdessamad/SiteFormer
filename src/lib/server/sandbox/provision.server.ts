@@ -1,4 +1,5 @@
 import { serverEnv } from '../env.server'
+import { errorFields, log as slog } from '../log.server'
 import { BROWSER_BACKGROUND_INSTALL } from './browser-install'
 import {
   createInstance,
@@ -90,7 +91,12 @@ async function waitForPreview(sandboxId: string, timeoutMs: number): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, 2000))
   }
   const log = await exec(sandboxId, 'tail -20 /tmp/dev.log 2>/dev/null', 15_000).catch(() => null)
-  console.error('[sandbox] preview did not start; last status', last || 'none', '\n', log?.stdout)
+  slog.error('Preview server did not start', {
+    event: 'sandbox.preview_failed',
+    sandboxId,
+    lastStatus: last || 'none',
+    devLog: log?.stdout.slice(-1500),
+  })
   throw new SandboxError('The preview server did not start.')
 }
 
@@ -115,7 +121,13 @@ async function provision(target: ProvisionTarget): Promise<void> {
 
   const setup = await exec(sandboxId, setupScript(), 300_000)
   if (setup.exitCode !== 0 || !setup.stdout.includes('setup-ok')) {
-    console.error('[sandbox] setup failed', setup.exitCode, setup.stderr.slice(-800))
+    slog.error('Sandbox setup script failed', {
+      event: 'sandbox.setup_failed',
+      projectId: target.projectId,
+      sandboxId,
+      exitCode: setup.exitCode,
+      stderr: setup.stderr.slice(-1500),
+    })
     throw new SandboxError(STEP_ERRORS[setup.exitCode] ?? 'The sandbox setup failed.')
   }
 
@@ -147,11 +159,30 @@ const jobs = new Map<string, Promise<void>>()
 function run(target: ProvisionTarget, work: (t: ProvisionTarget) => Promise<void>): Promise<void> {
   const running = jobs.get(target.projectId)
   if (running) return running
+  const started = Date.now()
+  const kind = work === provision ? 'setup' : 'resume'
+  slog.info(`Sandbox ${kind} started`, {
+    event: `sandbox.${kind}_started`,
+    projectId: target.projectId,
+    sandboxId: target.sandboxId,
+  })
   const job = work(target)
+    .then(() => {
+      slog.info(`Sandbox ${kind} done`, {
+        event: `sandbox.${kind}_done`,
+        projectId: target.projectId,
+        ms: Date.now() - started,
+      })
+    })
     .catch(async (error: unknown) => {
       const message =
         error instanceof SandboxError ? error.message : 'The sandbox setup failed. Try again.'
-      console.error(`[sandbox ${target.projectId.slice(0, 8)}]`, error)
+      slog.error('Sandbox job failed', {
+        event: 'sandbox.failed',
+        projectId: target.projectId,
+        ms: Date.now() - started,
+        ...errorFields(error),
+      })
       await target.save({ status: 'failed', error: message }).catch(() => undefined)
       throw error
     })

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArrowUp, ChevronRight, Loader2, Square } from 'lucide-react'
+import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '~/features/projects/types'
 import { useAgentChat } from '../hooks/use-agent-chat'
@@ -44,6 +45,16 @@ export function AgentChat({
     onActivity()
   }, [streaming, onActivity])
 
+  // Every chat error reaches the server logs (Railway), not just the user's screen.
+  useEffect(() => {
+    if (chat.error) {
+      reportClientError('agent-chat', chat.error.message, {
+        projectId: project.id,
+        detail: activeRun ? `active run ${activeRun.id} (${activeRun.status})` : 'no active run',
+      })
+    }
+  }, [chat.error, project.id, activeRun])
+
   // Self-heal: if the live stream errors while the run is still active, reconnect.
   useEffect(() => {
     if (!chat.error || !activeRun) return
@@ -68,7 +79,9 @@ export function AgentChat({
       await chat.sendMessage(text)
     } catch (err) {
       setDraft(text)
-      setSendError(err instanceof Error ? err.message : 'Could not send. Try again.')
+      const message = err instanceof Error ? err.message : 'Could not send. Try again.'
+      setSendError(message)
+      reportClientError('agent-send', message, { projectId: project.id })
     }
   }
 

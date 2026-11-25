@@ -1,4 +1,5 @@
 import { AppError } from './app-error'
+import { errorFields, log } from './log.server'
 import { ConfigError } from './env.server'
 
 export { AppError }
@@ -13,10 +14,10 @@ export async function safely<T>(label: string, fn: () => Promise<T>): Promise<T>
   } catch (error) {
     if (error instanceof AppError) throw error
     if (error instanceof ConfigError) {
-      console.error(`[${label}] server misconfigured:`, error.message)
+      log.error('Server misconfigured', { event: 'config_error', fn: label, error: error.message })
       throw new AppError('This feature is not set up on the server yet.', 'unavailable')
     }
-    console.error(`[${label}] unexpected error:`, error)
+    log.error('Server function failed', { event: 'fn.error', fn: label, ...errorFields(error) })
     throw new AppError('Something went wrong. Please try again.', 'unavailable')
   }
 }

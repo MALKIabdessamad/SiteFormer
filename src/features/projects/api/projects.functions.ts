@@ -7,6 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { restoreCheckpoint } from '~/lib/server/agent/checkpoints.server'
 import { getRunRow } from '~/lib/server/agent/persistence.server'
+import { removeProjectScreenshots } from '~/lib/server/agent/screenshots.server'
 import {
   appendAssistantNote,
   enqueueRun,
@@ -18,6 +19,7 @@ import {
 import type { SandboxSession } from '~/lib/server/agent/sandbox-session.server'
 import { generateProjectName } from '~/lib/server/ai/naming.server'
 import { serverEnv } from '~/lib/server/env.server'
+import { log } from '~/lib/server/log.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { ownedProject, provisionTarget, saveProject } from '~/lib/server/projects.server'
 import { requireUser } from '~/lib/server/require-user'
@@ -85,6 +87,7 @@ export const createProject = createServerFn({ method: 'POST' })
       if (error) throw error
 
       await enqueueRun({ runId: newRunId(), projectId: project.id, userId, prompt: data.prompt })
+      log.info('Project created', { event: 'project.created', projectId: project.id, userId })
       background(generateProjectName(data.prompt).then((name) => saveProject(project.id, { name })))
       background(ensureProvisioned(provisionTarget(project)))
       return { id: project.id }
@@ -177,6 +180,12 @@ export const deleteProject = createServerFn({ method: 'POST' })
       if (project.sandbox_id) await deleteInstance(project.sandbox_id)
       const { error } = await supabaseAdmin().from('projects').delete().eq('id', project.id)
       if (error) throw error
+      await removeProjectScreenshots(project.id)
+      log.info('Project deleted', {
+        event: 'project.deleted',
+        projectId: project.id,
+        userId: context.user.id,
+      })
       return { ok: true }
     }),
   )

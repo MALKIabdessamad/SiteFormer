@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ImageOff } from 'lucide-react'
+import { reportClientError } from '~/lib/report-error'
 import { getSupabase } from '~/lib/supabase/client'
 
 const BUCKET = 'agent-screenshots'
@@ -22,7 +23,13 @@ export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
       .createSignedUrl(path, 3600)
       .then(({ data, error }) => {
         if (!live) return
-        if (error || !data) return setFailed(true)
+        if (error || !data) {
+          reportClientError('screenshot', 'Could not sign screenshot URL', {
+            detail: `${path}: ${error?.message ?? 'no data'}`,
+            projectId: path.split('/')[0],
+          })
+          return setFailed(true)
+        }
         cache.set(path, { url: data.signedUrl, expires: Date.now() + 55 * 60 * 1000 })
         setUrl(data.signedUrl)
       })
@@ -44,6 +51,13 @@ export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
         <img
           src={url}
           alt={alt}
+          onError={() => {
+            reportClientError('screenshot', 'Screenshot image failed to load', {
+              detail: path,
+              projectId: path.split('/')[0],
+            })
+            setFailed(true)
+          }}
           loading="lazy"
           className="max-h-72 w-full rounded-xl border bg-white object-cover object-top"
         />

@@ -1,4 +1,5 @@
 import { chat } from '@tanstack/ai'
+import { log } from '../log.server'
 import { createOpenRouterText } from '@tanstack/ai-openrouter'
 import { z } from 'zod'
 import { finalProjectName } from '~/features/projects/lib/project-name'
@@ -50,7 +51,7 @@ export async function generateProjectName(prompt: string): Promise<string> {
       return finalProjectName(await askModel(text), text)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      console.warn(`[naming] attempt ${attempt} failed: ${reason}`)
+      log.warn('Project naming attempt failed', { event: 'naming.failed', attempt, reason })
     }
   }
   return finalProjectName(undefined, text)

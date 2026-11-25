@@ -28,13 +28,14 @@ import { memoryMiddleware } from '@tanstack/ai-memory'
 import { createOpenRouterText } from '@tanstack/ai-openrouter'
 import { isTerminalRunStatus, withPersistence } from '@tanstack/ai-persistence'
 import { AppError } from '../app-error'
+import { errorFields, log as logger, preview } from '../log.server'
 import { serverEnv } from '../env.server'
 import { getProject, provisionTarget, type ProjectRow } from '../projects.server'
 import { ensureProvisioned, isBusy } from '../sandbox/provision.server'
 import { supabaseAdmin } from '../supabase-admin.server'
 import { commitAll, ensureRepo, filesChanged } from './checkpoints.server'
 import { supabaseMemory } from './memory.server'
-import { progressSaverMiddleware, visionMiddleware } from './middleware.server'
+import { loggingMiddleware, progressSaverMiddleware, visionMiddleware } from './middleware.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
 import { runContext, SYSTEM_PROMPT } from './prompt.server'
 import type { SandboxSession } from './sandbox-session.server'
@@ -112,6 +113,13 @@ export async function enqueueRun(input: {
   }
   // Joiners (the sender's tab, other tabs) attach to the log immediately.
   await memoryStream({ runId }).append([custom('run.queued', { runId })])
+  logger.info('Agent run queued', {
+    event: 'agent.queued',
+    runId,
+    projectId,
+    userId,
+    prompt: preview(prompt),
+  })
   void drive(runId)
   return { runId }
 }
@@ -132,6 +140,12 @@ async function waitForSandbox(
     const state = project.status === 'failed' ? 'sandbox_failed' : 'sandbox_starting'
     if (state !== announced) {
       announced = state
+      logger.info('Agent run waiting for sandbox', {
+        event: 'agent.waiting',
+        runId: row.id,
+        projectId: row.project_id,
+        reason: state,
+      })
       await log.append([custom('run.waiting', { reason: state })])
     }
     // After a restart nothing drives an unfinished setup: resume it (failed setups wait for Retry).
@@ -190,6 +204,7 @@ function agentStream(
   context: string,
   resumed: boolean,
   controller: AbortController,
+  runLog: ReturnType<typeof logger.with>,
 ) {
   const env = serverEnv()
   const adapter = createOpenRouterText(
@@ -234,6 +249,7 @@ function agentStream(
       }),
       visionMiddleware(session),
       progressSaverMiddleware(row.project_id),
+      loggingMiddleware(runLog),
     ],
   })
 }
@@ -256,9 +272,16 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
     await log.close()
     return
   }
+  const runLog = logger.with({ runId, projectId: row.project_id })
+  const startedAt = now()
   try {
     const project = await waitForSandbox(row, log, controller.signal)
     session = sessionFor(row, project, controller.signal)
+    runLog.info(resumed ? 'Agent run resumed after restart' : 'Agent run started', {
+      event: resumed ? 'agent.resumed' : 'agent.started',
+      sandboxId: project.sandbox_id,
+      model: serverEnv().AGENT_MODEL,
+    })
 
     await updateRun(runId, {
       status: 'running',
@@ -275,7 +298,7 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
     }
     const context = await runContext(session)
 
-    for await (const chunk of agentStream(row, session, context, resumed, controller)) {
+    for await (const chunk of agentStream(row, session, context, resumed, controller, runLog)) {
       await log.append([chunk])
     }
   } catch (error) {
@@ -286,7 +309,10 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
         : stopped
           ? 'Stopped.'
           : 'The agent hit an error. Try again.'
-    if (!(error instanceof AppError) && !stopped) console.error(`[agent ${runId}]`, error)
+    if (stopped) runLog.info('Agent run stopped by the user', { event: 'agent.stopped' })
+    else if (error instanceof AppError)
+      runLog.warn('Agent run ended', { event: 'agent.ended', reason: error.message })
+    else runLog.error('Agent run crashed', { event: 'agent.crashed', ...errorFields(error) })
     await log
       .append([
         stopped
@@ -295,9 +321,29 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
       ])
       .catch(() => undefined)
   } finally {
-    await finalize(runId, session, row).catch((err) =>
-      console.error(`[agent ${runId}] finalize`, err),
-    )
+    await finalize(runId, session, row)
+      .then(async () => {
+        const done = await getRunRow(runId)
+        const usage = (done?.record as { usage?: Record<string, unknown> } | undefined)?.usage
+        const details = usage?.promptTokensDetails as { cachedTokens?: number } | undefined
+        runLog.info('Agent run finished', {
+          event: 'agent.finished',
+          status: done?.status,
+          filesChanged: done?.files_changed,
+          ms: now() - startedAt,
+          costUsd: usage?.cost,
+          promptTokens: usage?.promptTokens,
+          cachedTokens: details?.cachedTokens,
+          completionTokens: usage?.completionTokens,
+          checkpoint: done?.checkpoint_after?.slice(0, 7),
+        })
+      })
+      .catch((err) =>
+        runLog.error('Agent run finalize failed', {
+          event: 'agent.finalize_failed',
+          ...errorFields(err),
+        }),
+      )
     await log.close().catch(() => undefined)
   }
 }
@@ -325,6 +371,11 @@ export async function cancelRun(runId: string, userId: string): Promise<void> {
   const row = await getRunRow(runId)
   if (!row || row.user_id !== userId) throw new AppError('Run not found.', 'not_found')
   if (row.status !== 'queued' && row.status !== 'running') return
+  logger.info('Agent run cancel requested', {
+    event: 'agent.cancel',
+    runId,
+    projectId: row.project_id,
+  })
   await requestRunCancel(runStore, runId)
   const run = active.get(runId)
   if (run) {
@@ -355,6 +406,11 @@ export async function recoverRuns(projectId?: string): Promise<number> {
   for (const run of data ?? []) {
     if (active.has(run.id)) continue
     resumed += 1
+    logger.info('Resuming unfinished agent run', {
+      event: 'agent.recover',
+      runId: run.id,
+      status: run.status,
+    })
     void drive(run.id, { resumed: run.status === 'running' })
   }
   return resumed

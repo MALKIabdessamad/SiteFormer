@@ -193,6 +193,20 @@ transcript and metadata are server-only; all writes go through the server (secre
 Railway checks `GET /healthz` before routing traffic to a new deploy. On SIGTERM the server stops
 accepting connections and drains in-flight requests before exiting.
 
+## Logs (Railway)
+
+The server writes one JSON object per line; Railway parses them, so every field is filterable in
+the service's **Logs** tab (`LOG_LEVEL` = debug | info | warn | error, default info):
+
+| Filter                         | Shows                                                                                    |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `@level:error` / `@level:warn` | Problems only (server errors, failed tools, 4xx/5xx)                                     |
+| `@runId:<id>`                  | Everything one agent run did: queued, started, each tool, finished (cost, tokens, files) |
+| `@projectId:<id>`              | A project's sandbox setup, runs and deletion                                             |
+| `@event:agent.tool @ok:false`  | Failed tool calls with the reason                                                        |
+| `@event:client.error`          | Errors users hit in the browser (e.g. a screenshot that can't load)                      |
+| `@event:http`                  | One line per app request (method, path, status, ms)                                      |
+
 ## CI
 
 `.github/workflows/ci.yml` runs format check, lint, typecheck and build on every push to `main`

@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as ApiAgentRouteImport } from './routes/api/agent'
+import { Route as ApiLogRouteImport } from './routes/api/log'
 import { Route as AuthenticatedProjectProjectIdRouteImport } from './routes/_authenticated/project.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -34,6 +35,11 @@ const ApiAgentRoute = ApiAgentRouteImport.update({
   path: '/api/agent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiLogRoute = ApiLogRouteImport.update({
+  id: '/api/log',
+  path: '/api/log',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedProjectProjectIdRoute =
   AuthenticatedProjectProjectIdRouteImport.update({
     id: '/project/$projectId',
@@ -45,12 +51,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/log': typeof ApiLogRoute
   '/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/log': typeof ApiLogRoute
   '/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRoutesById {
@@ -59,19 +67,22 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/log': typeof ApiLogRoute
   '/_authenticated/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/api/agent' | '/project/$projectId'
+  fullPaths:
+    '/' | '/dashboard' | '/api/agent' | '/api/log' | '/project/$projectId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/api/agent' | '/project/$projectId'
+  to: '/' | '/dashboard' | '/api/agent' | '/api/log' | '/project/$projectId'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/_authenticated/dashboard'
     | '/api/agent'
+    | '/api/log'
     | '/_authenticated/project/$projectId'
   fileRoutesById: FileRoutesById
 }
@@ -79,6 +90,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   ApiAgentRoute: typeof ApiAgentRoute
+  ApiLogRoute: typeof ApiLogRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -111,6 +123,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/log': {
+      id: '/api/log'
+      path: '/api/log'
+      fullPath: '/api/log'
+      preLoaderRoute: typeof ApiLogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/project/$projectId': {
       id: '/_authenticated/project/$projectId'
       path: '/project/$projectId'
@@ -138,6 +157,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   ApiAgentRoute: ApiAgentRoute,
+  ApiLogRoute: ApiLogRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

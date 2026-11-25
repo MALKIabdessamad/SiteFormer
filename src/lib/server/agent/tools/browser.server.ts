@@ -4,14 +4,14 @@
  * are unpacked into a user folder). Screenshots go to Supabase Storage for the chat, and to the
  * model's NEXT call only (vision middleware), so image tokens are paid once.
  */
+import { log } from '../../log.server'
+import { SCREENSHOT_BUCKET } from '../screenshots.server'
 import { toolDefinition } from '@tanstack/ai'
 import { z } from 'zod'
 import { supabaseAdmin } from '../../supabase-admin.server'
 import { capText, sh, shellQuote, ToolError, type SandboxSession } from '../sandbox-session.server'
 
 import { BROWSER_DIR, BROWSER_ENV, BROWSER_INSTALL_SCRIPT } from '../../sandbox/browser-install'
-
-export const SCREENSHOT_BUCKET = 'agent-screenshots'
 
 /** Runner executed with node inside the sandbox. Input: base64 JSON job. Output: one JSON line. */
 const RUNNER = String.raw`
@@ -88,7 +88,12 @@ async function ensureBrowser(session: SandboxSession): Promise<void> {
     cwd: '/home/node',
   })
   if (install.exitCode !== 0) {
-    console.error('[browser] install failed', install.stderr.slice(-600))
+    log.error('Browser install failed in sandbox', {
+      event: 'browser.install_failed',
+      projectId: session.projectId,
+      runId: session.runId,
+      stderr: install.stderr.slice(-1500),
+    })
     throw new ToolError('The browser could not be installed in the sandbox. Try again later.')
   }
 }
@@ -145,7 +150,15 @@ async function keepScreenshot(session: SandboxSession, base64: string, caption: 
   const { error } = await supabaseAdmin()
     .storage.from(SCREENSHOT_BUCKET)
     .upload(path, Buffer.from(base64, 'base64'), { contentType: 'image/jpeg', upsert: false })
-  if (error) console.error('[browser] screenshot upload failed', error.message)
+  if (error) {
+    log.error('Screenshot upload failed', {
+      event: 'screenshot.upload_failed',
+      projectId: session.projectId,
+      runId: session.runId,
+      path,
+      error: error.message,
+    })
+  }
   session.pendingImages.push({ mediaType: 'image/jpeg', base64, caption })
   return error ? null : path
 }

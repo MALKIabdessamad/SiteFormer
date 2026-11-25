@@ -11,13 +11,24 @@
  */
 import { join, normalize } from 'node:path'
 
+/** Same JSON-line format as src/lib/server/log.server.ts (Railway parses the fields). */
+function log(
+  level: 'info' | 'warn' | 'error',
+  message: string,
+  fields: Record<string, unknown> = {},
+) {
+  const line = JSON.stringify({ level, message, time: new Date().toISOString(), ...fields })
+  if (level === 'info') process.stdout.write(`${line}\n`)
+  else process.stderr.write(`${line}\n`)
+}
+
 const CLIENT_DIR = join(import.meta.dir, 'dist', 'client')
 const SERVER_ENTRY = join(import.meta.dir, 'dist', 'server', 'server.js')
 const PORT = Number(process.env.PORT ?? 3000) // Railway injects PORT
 const IS_PROD = process.env.NODE_ENV === 'production'
 
 if (!(await Bun.file(SERVER_ENTRY).exists())) {
-  console.error('No build found. Run `bun run build` first.')
+  log('error', 'No build found. Run `bun run build` first.')
   process.exit(1)
 }
 
@@ -91,22 +102,46 @@ const server = Bun.serve({
       const asset = await serveStatic(pathname)
       if (asset) return withSecurityHeaders(asset)
     }
-    return withSecurityHeaders(await app.fetch(request))
+    const started = performance.now()
+    const response = await app.fetch(request)
+    // One line per app request (static files and health checks are skipped). For streams
+    // (agent progress) `ms` is the time to the first byte, not the stream's length.
+    const status = response.status
+    log(
+      status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info',
+      `${request.method} ${pathname} ${status}`,
+      {
+        event: 'http',
+        method: request.method,
+        path: pathname,
+        status,
+        ms: Math.round(performance.now() - started),
+      },
+    )
+    return withSecurityHeaders(response)
   },
   error(error) {
-    console.error(error)
+    log('error', 'Unhandled server error', {
+      event: 'http.crash',
+      error: error.message,
+      stack: error.stack
+        ?.split('\n')
+        .slice(1, 6)
+        .map((l) => l.trim())
+        .join(' | '),
+    })
     return new Response('Internal Server Error', { status: 500 })
   },
 })
 
-console.log(`Server listening on ${server.url}`)
+log('info', `Server listening on ${server.url}`, { event: 'boot', port: PORT })
 
 // Railway sends SIGTERM on every deploy: stop accepting connections, let in-flight
 // requests finish, then exit.
 async function shutdown(signal: string) {
   if (stopping) return
   stopping = true
-  console.log(`${signal} received, shutting down`)
+  log('info', `${signal} received, shutting down`, { event: 'shutdown', signal })
   // Let normal requests finish, then close the long-lived agent streams (clients resume them
   // on the new instance; unfinished runs are resumed by its boot recovery).
   const forceClose = setTimeout(() => void server.stop(true), 5000)
@@ -125,6 +160,17 @@ void Promise.resolve(
     }),
   ),
 )
-  .then(async (res) => console.log('[agent] boot recovery:', res.status, await res.text()))
-  .catch((err) => console.error('[agent] boot recovery failed', err))
+  .then(async (res) =>
+    log('info', 'Agent boot recovery', {
+      event: 'agent.boot_recovery',
+      status: res.status,
+      result: await res.text(),
+    }),
+  )
+  .catch((err) =>
+    log('error', 'Agent boot recovery failed', {
+      event: 'agent.boot_recovery_failed',
+      error: String(err),
+    }),
+  )
 process.on('SIGINT', () => void shutdown('SIGINT'))
