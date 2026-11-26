@@ -80,6 +80,15 @@
     border-color 0.15s ease;
 }
 
+/* Cuts a path from the start so its end stays visible ("…/posts/42"). Wrap the text in <bdi>. */
+@utility truncate-start {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
 @keyframes rise {
   from {
     opacity: 0;

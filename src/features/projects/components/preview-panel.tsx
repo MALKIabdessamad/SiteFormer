@@ -1,18 +1,12 @@
-import { useState, type FormEvent } from 'react'
-import {
-  AlertTriangle,
-  ExternalLink,
-  Loader2,
-  Monitor,
-  RotateCw,
-  Smartphone,
-  Tablet,
-} from 'lucide-react'
+import { useState } from 'react'
+import { AlertTriangle, ExternalLink, Loader2, Monitor, Smartphone, Tablet } from 'lucide-react'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils/cn'
+import { toPath } from '../lib/site-pages'
 import type { Project } from '../types'
+import { PagePicker } from './page-picker'
 
-export type PreviewDevice = 'desktop' | 'tablet' | 'mobile'
+type PreviewDevice = 'desktop' | 'tablet' | 'mobile'
 
 const DEVICES: Array<{
   id: PreviewDevice
@@ -25,28 +19,23 @@ const DEVICES: Array<{
   { id: 'mobile', label: 'Phone', Icon: Smartphone, width: 390 },
 ]
 
+// Without `display`, so each button picks its own (grid, or hidden on phones).
 const roundButton =
-  'grid h-9 w-9 shrink-0 place-items-center rounded-full text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent md:pointer-fine:h-8 md:pointer-fine:w-8'
+  'h-9 w-9 shrink-0 place-items-center rounded-full text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent md:pointer-fine:h-8 md:pointer-fine:w-8'
 
 /** Preview state shared by the header controls and the frame. */
 export function usePreview(project: Project) {
   const url = project.status === 'ready' ? project.preview_url : null
   const [device, setDevice] = useState<PreviewDevice>('desktop')
   const [path, setPath] = useState('/')
-  const [draft, setDraft] = useState<string | null>(null)
   const [reloads, setReloads] = useState(0)
   return {
     url,
     device,
     setDevice,
     path,
-    draft: draft ?? path.replace(/^\/+/, ''),
-    editPath: setDraft,
-    cancelEdit: () => setDraft(null),
     go: (next: string) => {
-      const clean = `/${next.trim().replace(/^\/+/, '')}`
-      setPath(clean)
-      setDraft(null)
+      setPath(toPath(next))
       setReloads((n) => n + 1)
     },
     reloads,
@@ -57,80 +46,38 @@ export type Preview = ReturnType<typeof usePreview>
 
 const href = (url: string, path: string) => new URL(path, url).toString()
 
-/** Device size, page path (with reload) and "open in new tab". */
-export function PreviewControls({ preview }: { preview: Preview }) {
+/** Device size (one button: desktop → tablet → phone), the path bar and "open in new tab". */
+export function PreviewControls({ projectId, preview }: { projectId: string; preview: Preview }) {
   const ready = Boolean(preview.url)
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    preview.go(preview.draft)
-  }
+  const at = Math.max(
+    0,
+    DEVICES.findIndex((d) => d.id === preview.device),
+  )
+  const current = DEVICES[at]!
+  const next = DEVICES[(at + 1) % DEVICES.length]!
   return (
     <div
       role="toolbar"
       aria-label="Preview controls"
-      className="flex min-w-0 flex-1 items-center gap-1"
+      className="flex w-full min-w-0 items-center gap-1"
     >
-      <div
-        role="radiogroup"
-        aria-label="Preview size"
-        className="hidden shrink-0 items-center gap-0.5 rounded-full border bg-raised p-0.5 sm:flex"
+      <button
+        type="button"
+        onClick={() => preview.setDevice(next.id)}
+        disabled={!ready}
+        aria-label={`${current.label} view. Switch to ${next.label.toLowerCase()} view`}
+        title={`${current.label} view · click for ${next.label.toLowerCase()}`}
+        className={'hidden sm:grid ' + roundButton}
       >
-        {DEVICES.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={preview.device === id}
-            aria-label={label}
-            title={label}
-            disabled={!ready}
-            onClick={() => preview.setDevice(id)}
-            className={cn(
-              'grid h-8 w-8 place-items-center rounded-full transition-colors disabled:opacity-40 md:pointer-fine:h-7 md:pointer-fine:w-7',
-              preview.device === id ? 'bg-ink/[0.09] text-ink' : 'text-dim hover:text-ink',
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        ))}
-      </div>
-      <form
-        onSubmit={submit}
-        className="mx-auto flex h-9 min-w-0 flex-1 items-center rounded-full border bg-raised pr-3 pl-1 font-mono text-xs text-dim transition-colors focus-within:border-signal/60 focus-within:text-ink md:max-w-[26rem] md:pointer-fine:h-8"
-      >
-        <button
-          type="button"
-          onClick={preview.reload}
-          disabled={!ready}
-          aria-label="Reload preview"
-          title="Reload preview"
-          className={roundButton + ' !h-7 !w-7'}
-        >
-          <RotateCw className="h-3.5 w-3.5" />
-        </button>
-        <label htmlFor="preview-path" className="sr-only">
-          Page path
-        </label>
-        <span aria-hidden className="ml-1 text-faint select-none">
-          /
-        </span>
-        <input
-          id="preview-path"
-          value={preview.draft}
-          disabled={!ready}
-          onChange={(e) => preview.editPath(e.target.value)}
-          onFocus={(e) => e.currentTarget.select()}
-          onBlur={preview.cancelEdit}
-          onKeyDown={(e) => e.key === 'Escape' && preview.cancelEdit()}
-          spellCheck={false}
-          autoComplete="off"
-          autoCapitalize="off"
-          inputMode="url"
-          enterKeyHint="go"
-          placeholder="page"
-          className="h-full min-w-0 flex-1 truncate bg-transparent px-0.5 outline-none placeholder:text-faint/60 disabled:opacity-50"
-        />
-      </form>
+        <current.Icon className="h-4 w-4" aria-hidden />
+      </button>
+      <PagePicker
+        projectId={projectId}
+        path={preview.path}
+        disabled={!ready}
+        onGo={preview.go}
+        onReload={preview.reload}
+      />
       {preview.url ? (
         <a
           href={href(preview.url, preview.path)}
@@ -138,12 +85,12 @@ export function PreviewControls({ preview }: { preview: Preview }) {
           rel="noopener noreferrer"
           aria-label="Open in a new tab"
           title="Open in a new tab"
-          className={roundButton}
+          className={'grid ' + roundButton}
         >
           <ExternalLink className="h-4 w-4" />
         </a>
       ) : (
-        <span aria-hidden className={roundButton + ' opacity-40'}>
+        <span aria-hidden className={'grid opacity-40 ' + roundButton}>
           <ExternalLink className="h-4 w-4" />
         </span>
       )}

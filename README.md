@@ -107,13 +107,15 @@ src/
 │   ├── auth/                   # Sign in/up/reset: AuthScreen, authService, requireUser guard
 │   ├── dashboard/              # DashboardScreen, AppSidebar, PromptBox, MobileTopBar
 │   ├── projects/               # ProjectScreen, preview + code tabs, server fns (create/open/
-│   │                           # retry/delete, code read/save), RLS reads + Realtime
+│   │                           # retry/delete, code read/save, site pages), RLS reads +
+│   │                           # Realtime; the page list comes from the site's routeTree.gen.ts;
+│   │                           # Publish is a placeholder (coming soon)
 │   ├── agent/                  # AgentChat, tool steps, attachments, checkpoints (restore),
 │   │                           # runs (useAgentRuns); lib/upload-ref.ts is shared with the server
 │   └── billing/                # BillingScreen, CreditsChip, useAccount, (mock) checkout fns;
 │                               # lib/credits.ts (credit math) is shared with the server
 ├── components/                 # ui/ primitives (Button, Input, Alert…), brand/ (Logo)
-├── hooks/                      # Shared hooks (useIsDesktop)
+├── hooks/                      # Shared hooks (useIsDesktop, useDismiss for popovers)
 ├── lib/
 │   ├── supabase/client.ts      # Browser-only Supabase singleton
 │   ├── report-error.ts         # Browser errors → server logs (/api/log)

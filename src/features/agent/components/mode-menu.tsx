@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronUp, MessageCircle, Sparkles } from 'lucide-react'
 import type { ProjectMode } from '~/features/projects'
+import { useDismiss } from '~/hooks/use-dismiss'
 import { cn } from '~/lib/utils/cn'
 
 const MODES: Array<{
@@ -46,25 +47,10 @@ export function ModeMenu({
   const items = useRef<Array<HTMLButtonElement | null>>([])
   const current = MODES.find((m) => m.id === mode) ?? MODES[0]!
 
-  // Close on a click outside or Escape (focus returns to the chip).
+  useDismiss(open, setOpen, root, trigger)
+  // Opening focuses the current mode, for arrow keys.
   useEffect(() => {
-    if (!open) return
-    const onPointer = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpen(false)
-        trigger.current?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', onPointer)
-    document.addEventListener('keydown', onKey)
-    items.current[MODES.findIndex((m) => m.id === mode)]?.focus()
-    return () => {
-      document.removeEventListener('pointerdown', onPointer)
-      document.removeEventListener('keydown', onKey)
-    }
+    if (open) items.current[MODES.findIndex((m) => m.id === mode)]?.focus()
   }, [open, mode])
 
   const choose = (next: ProjectMode) => {

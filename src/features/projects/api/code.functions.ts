@@ -1,5 +1,6 @@
 /**
  * The Code tab: list, read and save the project's files in its sandbox, as the verified owner.
+ * Also lists the site's pages for the preview's path bar.
  *
  * A save is refused while the agent is working (it would race the agent's own edits) and when
  * the file changed since the user opened it (`baseHash`). Each save is committed as a checkpoint
@@ -27,6 +28,7 @@ import { ownedProject } from '~/lib/server/projects.server'
 import { rateLimiter } from '~/lib/server/rate-limit'
 import { requireUser } from '~/lib/server/require-user'
 import { validate } from '~/lib/server/validate'
+import { sitePages } from '../lib/site-pages'
 
 const MAX_FILES = 2000
 /** Files above this open read-only (and can't be saved from the editor). */
@@ -118,6 +120,23 @@ export const listProjectFiles = createServerFn({ method: 'POST' })
       )
       const files = result.stdout.split('\n').filter(Boolean)
       return { files: files.slice(0, MAX_FILES), truncated: files.length > MAX_FILES }
+    }),
+  )
+
+/** The site's pages, from the route tree its dev server generates (none until it exists). */
+export const listSitePages = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(ListInput)
+  .handler(({ data, context }) =>
+    safely('listSitePages', async () => {
+      const session = await sessionFor(context.user.id, data.projectId, allowRead)
+      // Only the route interfaces (a few lines), not the whole generated file.
+      const result = await sh(
+        session,
+        `sed -n '/^export interface FileRoutesBy/,/^}/p' src/routeTree.gen.ts 2>/dev/null || true`,
+        { timeoutSeconds: 15 },
+      )
+      return { pages: sitePages(result.stdout) }
     }),
   )
 
