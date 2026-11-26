@@ -112,8 +112,7 @@ const messages = {
       out.push(...(data ?? []).map((row) => row.message))
       if (!data || data.length < 1000) break
     }
-    if (out.length) return out
-    return legacyThread(threadId)
+    return out
   },
 
   /**
@@ -155,20 +154,6 @@ const messages = {
       if (error) throw error
     }
   },
-}
-
-/**
- * Transition only (until migration 20261126000009 drops agent_threads): a project whose
- * transcript is still in the old one-blob table. The first save moves it to agent_messages.
- */
-async function legacyThread(threadId: string): Promise<Array<ModelMessage>> {
-  const { data, error } = await supabaseAdmin()
-    .from('agent_threads')
-    .select('messages')
-    .eq('project_id', threadId)
-    .maybeSingle<{ messages: Array<ModelMessage> }>()
-  if (error) return [] // table already dropped
-  return data?.messages ?? []
 }
 
 const runs = defineRunStore({
