@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ArrowUp, ChevronRight, Loader2, Square } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { ArrowUp, ChevronRight, History, Loader2, PencilLine, Square } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '~/features/projects/types'
@@ -8,7 +8,7 @@ import { useAttachments } from '../hooks/use-attachments'
 import { uploadParts } from '../lib/attachments'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
-import { buildTurns } from '../lib/turns'
+import { buildTurns, type Segment } from '../lib/turns'
 import { CheckpointCard } from './checkpoint-card'
 import { Markdown } from './markdown'
 import { ToolStep } from './tool-step'
@@ -24,6 +24,8 @@ type AgentChatProps = {
   onConnectionLost: () => void
   /** Streaming started or stopped: the parent re-reads the runs (new run, final status). */
   onActivity: () => void
+  /** The agent started or stopped working (as this chat sees it, even without Realtime). */
+  onBusyChange?: (busy: boolean) => void
 }
 
 export function AgentChat({
@@ -33,6 +35,7 @@ export function AgentChat({
   onRestored,
   onConnectionLost,
   onActivity,
+  onBusyChange,
 }: AgentChatProps) {
   const chat = useAgentChat(project.id)
   const [draft, setDraft] = useState('')
@@ -40,6 +43,7 @@ export function AgentChat({
   const attachments = useAttachments(project.id)
   const [dragging, setDragging] = useState(false)
   const listRef = useRef<HTMLOListElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const stickToBottom = useRef(true)
 
   const streaming = chat.isLoading || chat.status === 'streaming' || chat.status === 'submitted'
@@ -49,6 +53,10 @@ export function AgentChat({
   useEffect(() => {
     onActivity()
   }, [streaming, onActivity])
+
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
 
   // Every chat error reaches the server logs (Railway), not just the user's screen.
   useEffect(() => {
@@ -66,6 +74,14 @@ export function AgentChat({
     const timer = setTimeout(onConnectionLost, 1500)
     return () => clearTimeout(timer)
   }, [chat.error, activeRun, onConnectionLost])
+
+  // The input grows with its text (up to its max height).
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${Math.min(input.scrollHeight, 200)}px`
+  }, [draft])
 
   // Follow new output unless the user scrolled up to read.
   useEffect(() => {
@@ -137,13 +153,15 @@ export function AgentChat({
                 </div>
               )}
               <div className="space-y-1.5">
-                {turn.segments.map((segment) =>
-                  segment.kind === 'text' ? (
-                    <Markdown key={segment.key} text={segment.text} />
-                  ) : segment.kind === 'thinking' ? (
-                    <Thinking key={segment.key} text={segment.text} />
+                {groupSegments(turn.segments).map((group) =>
+                  group.kind === 'tools' ? (
+                    <ToolGroup key={group.key} segments={group.segments} />
+                  ) : group.segment.kind === 'text' ? (
+                    <Markdown key={group.key} text={group.segment.text} />
+                  ) : group.segment.kind === 'thinking' ? (
+                    <Thinking key={group.key} text={group.segment.text} />
                   ) : (
-                    <ToolStep key={segment.key} step={segment.step} />
+                    <ToolStep key={group.key} step={group.segment.step} />
                   ),
                 )}
               </div>
@@ -157,8 +175,16 @@ export function AgentChat({
                 />
               )}
               {turn.notes.map((note, n) => (
-                <p key={n} className="text-center text-[11px] text-faint">
-                  {note}
+                <p
+                  key={n}
+                  className="mx-auto flex w-fit max-w-full items-center gap-1.5 rounded-full border bg-ink/[0.03] px-3 py-1 text-[11px] text-dim"
+                >
+                  {note.startsWith('✎') ? (
+                    <PencilLine className="h-3 w-3 shrink-0 text-signal" aria-hidden />
+                  ) : (
+                    <History className="h-3 w-3 shrink-0" aria-hidden />
+                  )}
+                  <span className="truncate">{note.replace(/^(↩︎|✎)\s*/, '')}</span>
                 </p>
               ))}
             </li>
@@ -205,7 +231,7 @@ export function AgentChat({
         )}
         <div
           className={cn(
-            'rounded-3xl p-2.5 box-sculpted focus-within:border-signal/70',
+            'rounded-[26px] p-2 box-sculpted transition-colors focus-within:border-signal/60',
             dragging && 'border-signal/70 bg-signal/5',
           )}
         >
@@ -216,6 +242,7 @@ export function AgentChat({
               Message the agent
             </label>
             <textarea
+              ref={inputRef}
               id="agent-input"
               rows={1}
               value={draft}
@@ -235,7 +262,7 @@ export function AgentChat({
                 }
               }}
               placeholder={busy ? 'The agent is working… (you can stop it)' : 'Ask for a change…'}
-              className="block max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
+              className="block min-h-10 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2.5 text-sm leading-5 outline-none placeholder:text-faint"
             />
             {busy ? (
               <button
@@ -284,6 +311,51 @@ function Thinking({ text }: { text: string }) {
         Thinking
       </button>
       {open && <p className="mt-1 ml-4 whitespace-pre-wrap">{text}</p>}
+    </div>
+  )
+}
+
+type Group =
+  | { kind: 'one'; key: string; segment: Segment }
+  | { kind: 'tools'; key: string; segments: Array<Extract<Segment, { kind: 'tool' }>> }
+
+/** Consecutive tool calls (not plans) form one group, so long runs can fold. */
+function groupSegments(segments: ReadonlyArray<Segment>): Array<Group> {
+  const out: Array<Group> = []
+  for (const segment of segments) {
+    const last = out.at(-1)
+    if (segment.kind === 'tool' && segment.step.name !== 'update_plan') {
+      if (last?.kind === 'tools') last.segments.push(segment)
+      else out.push({ kind: 'tools', key: segment.key, segments: [segment] })
+    } else {
+      out.push({ kind: 'one', key: segment.key, segment })
+    }
+  }
+  return out
+}
+
+const SHOWN_STEPS = 3
+
+/** A run of tool steps: the last few show; earlier ones fold behind "N more steps". */
+function ToolGroup({ segments }: { segments: Array<Extract<Segment, { kind: 'tool' }>> }) {
+  const [open, setOpen] = useState(false)
+  const folded = open ? 0 : segments.length - SHOWN_STEPS
+  const hidden = folded > 1 ? folded : 0
+  return (
+    <div className="space-y-0.5">
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 rounded-full py-0.5 text-xs text-faint transition-colors hover:text-dim"
+        >
+          <ChevronRight className="h-3 w-3" aria-hidden />
+          {hidden} more steps
+        </button>
+      )}
+      {segments.slice(hidden).map((segment) => (
+        <ToolStep key={segment.key} step={segment.step} />
+      ))}
     </div>
   )
 }

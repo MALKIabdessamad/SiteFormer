@@ -15,6 +15,15 @@
     "smoke": "bun --env-file=.env run scripts/smoke-sandbox.ts"
   },
   "dependencies": {
+    "@codemirror/commands": "6.8.1",
+    "@codemirror/lang-css": "6.3.1",
+    "@codemirror/lang-html": "6.4.9",
+    "@codemirror/lang-javascript": "6.2.2",
+    "@codemirror/lang-json": "6.0.1",
+    "@codemirror/lang-markdown": "6.3.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/theme-one-dark": "6.1.2",
+    "@codemirror/view": "6.43.15",
     "@supabase/supabase-js": "^2.119.2",
     "@tanstack/ai": "1.8.0",
     "@tanstack/ai-compaction": "1.1.0",
@@ -24,6 +33,7 @@
     "@tanstack/ai-react": "1.1.1",
     "@tanstack/react-router": "^1.170.46",
     "@tanstack/react-start": "^1.169.7",
+    "codemirror": "6.0.1",
     "lucide-react": "^1.78.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

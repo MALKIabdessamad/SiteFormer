@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
+import { MessageSquare, PanelLeftOpen } from 'lucide-react'
 import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
 import { isSettledRun, useAgentRuns } from '~/features/agent'
@@ -9,13 +10,15 @@ import { toErrorMessage } from '~/lib/utils/errors'
 import { deleteProject, openProject, retryProject } from '../api/projects.functions'
 import { useProject } from '../hooks/use-projects'
 import { ChatPanel } from './chat-panel'
-import { PreviewPanel } from './preview-panel'
+import { ProjectPane } from './project-pane'
 
-/** Workspace for one project: chat on the left, live preview on the right. */
+/** Workspace for one project: chat on the left; preview / code on the right. */
 export function ProjectScreen({ projectId }: { projectId: string }) {
   const navigate = useNavigate()
   const { status, project, refresh } = useProject(projectId)
-  const [mobileView, setMobileView] = useState<'chat' | 'preview'>('chat')
+  const [mobileView, setMobileView] = useState<'chat' | 'project'>('chat')
+  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [chatBusy, setChatBusy] = useState(false)
   const [busy, setBusy] = useState<'retry' | 'delete' | null>(null)
   const [error, setError] = useState('')
   const { runs, activeRun, refresh: refreshRuns } = useAgentRuns(projectId)
@@ -34,6 +37,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   }, [finishedRuns])
 
   const reconnectChat = useCallback(() => setChatKey((k) => k + 1), [])
+  const afterSave = useCallback(() => {
+    setChatKey((k) => k + 1) // show the "you edited" note
+  }, [])
   const afterRestore = useCallback(() => {
     setChatKey((k) => k + 1) // show the restore note
     setPreviewKey((k) => k + 1)
@@ -109,12 +115,16 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     )
   }
 
+  const small =
+    'grid h-9 w-9 shrink-0 place-items-center rounded-full text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink'
+
   return (
     <div className="flex h-dvh min-h-0 bg-sidebar pt-[env(safe-area-inset-top)] text-ink md:p-2 md:pl-0">
       <div
         className={cn(
-          'min-h-0 w-full flex-col md:flex md:w-[360px] md:shrink-0',
+          'min-h-0 w-full flex-col md:w-[360px] md:shrink-0',
           mobileView === 'chat' ? 'flex' : 'hidden',
+          chatCollapsed ? 'md:hidden' : 'md:flex',
         )}
       >
         <ChatPanel
@@ -124,24 +134,64 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           chatKey={chatKey}
           deleting={busy === 'delete'}
           onDelete={() => void remove()}
-          onShowPreview={() => setMobileView('preview')}
+          onShowPreview={() => setMobileView('project')}
+          onCollapse={() => setChatCollapsed(true)}
           onRestored={afterRestore}
           onConnectionLost={reconnectChat}
           onActivity={refreshRuns}
+          onBusyChange={setChatBusy}
         />
       </div>
       <div
         className={cn(
           'min-h-0 min-w-0 flex-1 flex-col md:flex',
-          mobileView === 'preview' ? 'flex' : 'hidden',
+          mobileView === 'project' ? 'flex' : 'hidden',
         )}
       >
-        <PreviewPanel
+        <ProjectPane
           project={project}
+          agentBusy={chatBusy || Boolean(activeRun)}
           reloadSignal={previewKey}
           retrying={busy === 'retry'}
           onRetry={() => void retry()}
-          onShowChat={() => setMobileView('chat')}
+          onSaved={afterSave}
+          chatToggle={
+            <>
+              <button
+                type="button"
+                onClick={() => setMobileView('chat')}
+                aria-label="Show chat"
+                title="Show chat"
+                className={small + ' relative md:hidden'}
+              >
+                <MessageSquare className="h-4 w-4" />
+                {activeRun && (
+                  <span
+                    aria-hidden
+                    className="absolute top-1.5 right-1.5 h-2 w-2 animate-pulse rounded-full bg-signal"
+                  />
+                )}
+              </button>
+              {chatCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => setChatCollapsed(false)}
+                  aria-label="Show chat"
+                  title="Show chat"
+                  aria-expanded={false}
+                  className={small + ' relative hidden md:grid'}
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                  {activeRun && (
+                    <span
+                      aria-hidden
+                      className="absolute top-1.5 right-1.5 h-2 w-2 animate-pulse rounded-full bg-signal"
+                    />
+                  )}
+                </button>
+              )}
+            </>
+          }
         />
       </div>
       {error && (

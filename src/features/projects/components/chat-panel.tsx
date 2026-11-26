@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, Eye, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, PanelLeftClose, Trash2 } from 'lucide-react'
 import { AgentChat, type AgentRun } from '~/features/agent'
 import type { Project } from '../types'
 import { StatusLine } from './status-dot'
@@ -17,9 +17,12 @@ type ChatPanelProps = {
   deleting: boolean
   onDelete: () => void
   onShowPreview: () => void
+  /** Desktop: hide the chat column. */
+  onCollapse: () => void
   onRestored: () => void
   onConnectionLost: () => void
   onActivity: () => void
+  onBusyChange: (busy: boolean) => void
 }
 
 /** Conversation column: project header + the coding agent's chat. */
@@ -31,9 +34,11 @@ export function ChatPanel({
   deleting,
   onDelete,
   onShowPreview,
+  onCollapse,
   onRestored,
   onConnectionLost,
   onActivity,
+  onBusyChange,
 }: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
@@ -60,8 +65,8 @@ export function ChatPanel({
         <button
           type="button"
           onClick={onShowPreview}
-          aria-label="Show preview"
-          title="Show preview"
+          aria-label="Show preview and code"
+          title="Preview & code"
           className={iconButton + ' md:hidden'}
         >
           <Eye className="h-4 w-4" />
@@ -75,6 +80,16 @@ export function ChatPanel({
           className={iconButton + ' hover:text-danger'}
         >
           <Trash2 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onCollapse}
+          aria-label="Hide chat"
+          title="Hide chat"
+          aria-expanded
+          className={iconButton + ' hidden md:grid'}
+        >
+          <PanelLeftClose className="h-4 w-4" />
         </button>
       </header>
 
@@ -122,6 +137,7 @@ export function ChatPanel({
         onRestored={onRestored}
         onConnectionLost={onConnectionLost}
         onActivity={onActivity}
+        onBusyChange={onBusyChange}
       />
     </section>
   )

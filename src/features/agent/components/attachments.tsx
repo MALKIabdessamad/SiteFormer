@@ -54,26 +54,31 @@ export function AttachmentChips({
 }) {
   if (items.length === 0) return null
   return (
-    <ul className="flex flex-wrap gap-2 px-1 pb-2" aria-label="Attached files">
+    <ul className="flex flex-wrap gap-1.5 px-1 pb-2" aria-label="Attached files">
       {items.map((item) => (
         <li
           key={item.key}
           title={item.error ?? item.file.name}
           className={cn(
-            'relative flex h-14 max-w-[12rem] items-center gap-2 rounded-xl border bg-ink/[0.03] pr-7 pl-1.5 text-xs',
+            'group relative flex h-10 max-w-[11rem] items-center gap-2 rounded-xl border bg-ink/[0.03] pr-7 pl-1 text-xs',
             item.status === 'error' && 'border-danger/40 text-danger',
           )}
         >
-          {item.preview ? (
-            <img src={item.preview} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />
-          ) : (
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-ink/[0.05]">
-              <FileText className="h-4 w-4" aria-hidden />
-            </span>
-          )}
+          <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-ink/[0.05]">
+            {item.preview ? (
+              <img src={item.preview} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <FileText className="absolute inset-0 m-auto h-3.5 w-3.5" aria-hidden />
+            )}
+            {item.status === 'uploading' && (
+              <span className="absolute inset-0 grid place-items-center bg-black/45">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-white" aria-label="Uploading" />
+              </span>
+            )}
+          </span>
           <span className="min-w-0">
-            <span className="block truncate">{item.file.name || 'Pasted image'}</span>
-            <span className="block text-[10px] text-faint">
+            <span className="block truncate leading-tight">{item.file.name || 'Pasted image'}</span>
+            <span className="block text-[10px] leading-tight text-faint">
               {item.status === 'uploading'
                 ? 'Uploading…'
                 : item.status === 'error'
@@ -81,12 +86,6 @@ export function AttachmentChips({
                   : `${Math.max(1, Math.round(item.file.size / 1024))} KB`}
             </span>
           </span>
-          {item.status === 'uploading' && (
-            <Loader2
-              className="absolute top-1.5 right-7 h-3 w-3 animate-spin text-signal"
-              aria-hidden
-            />
-          )}
           <button
             type="button"
             onClick={() => onRemove(item.key)}
@@ -124,31 +123,31 @@ export function MessageAttachments({ ids }: { ids: Array<string> }) {
 
   if (ids.length === 0) return null
   return (
-    <div className="flex flex-wrap justify-end gap-2">
+    <div className="flex flex-wrap justify-end gap-1.5">
       {ids.map((id) => {
         const info = known.get(id)
         if (!info)
           return (
-            <span key={id} className="h-20 w-20 animate-pulse rounded-xl border bg-ink/[0.04]" />
+            <span key={id} className="h-12 w-12 animate-pulse rounded-lg border bg-ink/[0.04]" />
           )
         if (info.kind === 'image') {
           return (
-            <span key={id} className="block w-24">
-              <ScreenshotImage
-                path={info.storage_path}
-                alt={info.name}
-                bucket="agent-uploads"
-                className="h-20 w-24 rounded-xl border bg-white object-cover"
-              />
-            </span>
+            <ScreenshotImage
+              key={id}
+              path={info.storage_path}
+              alt={info.name}
+              bucket="agent-uploads"
+              className="h-12 w-12"
+            />
           )
         }
         return (
           <span
             key={id}
-            className="mt-2 flex h-9 max-w-[14rem] items-center gap-2 rounded-xl border bg-ink/[0.03] px-2.5 text-xs"
+            title={info.name}
+            className="flex h-12 max-w-[11rem] items-center gap-2 rounded-lg border bg-ink/[0.03] px-2.5 text-xs"
           >
-            <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <FileText className="h-3.5 w-3.5 shrink-0 text-dim" aria-hidden />
             <span className="truncate">{info.name}</span>
           </span>
         )

@@ -267,8 +267,15 @@ export function ToolStep({ step }: { step: ToolStepData }) {
         </ul>
       )}
       {shot && (
-        <div className="ml-5.5">
-          <ScreenshotImage path={shot} alt={`Screenshot of ${str(step.input.path) || '/'}`} />
+        <div className="mt-1 mb-0.5 ml-5.5">
+          <ScreenshotImage
+            path={shot}
+            alt={
+              step.name === 'generate_image'
+                ? `Generated image ${str(step.output?.path)}`
+                : `Screenshot of ${str(step.input.url) || str(step.input.path) || '/'}`
+            }
+          />
         </div>
       )}
     </div>

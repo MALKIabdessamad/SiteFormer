@@ -78,9 +78,9 @@ export function buildTurns(messages: ReadonlyArray<UIMessage>, streaming: boolea
       current = { key: `pre-${message.id}`, user: null, attachments: [], segments: [], notes: [] }
       turns.push(current)
     }
-    // A plain restore note (no tools) is shown as a system-style line, not as a reply.
+    // Plain notes (a restore ↩︎, a manual edit ✎) are shown as system-style lines, not replies.
     const text = textOf(message)
-    if (text.startsWith('↩︎') && message.parts.every((p) => p.type === 'text')) {
+    if (/^(↩︎|✎)/.test(text) && message.parts.every((p) => p.type === 'text')) {
       current.notes.push(text)
       continue
     }
