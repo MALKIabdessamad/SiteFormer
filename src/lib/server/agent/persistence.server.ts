@@ -17,6 +17,7 @@ import {
 } from '@tanstack/ai-persistence'
 import type { MetadataStore, ModelMessage } from '@tanstack/ai'
 import { createHash } from 'node:crypto'
+import type { ProjectMode } from '~/features/projects/lib/constants'
 import { supabaseAdmin } from '../supabase-admin.server'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -34,6 +35,7 @@ export type AgentRunRow = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
+  mode: ProjectMode
   lease_owner: string | null
   lease_until: string | null
   record: Partial<RunRecord>

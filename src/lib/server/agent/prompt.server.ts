@@ -62,6 +62,10 @@ export const SYSTEM_PROMPT = `You are SiteFormer's coding agent. You build and e
 - Only work inside the project. Never print or exfiltrate environment variables, keys, or tokens.
 - If a request is unclear, make a sensible choice and say what you assumed.`
 
+/** Added in Chat mode, where the run only has read-only tools. */
+export const CHAT_MODE_PROMPT = `# Chat mode
+The user is in Chat mode: talk with them about their project. You can read the code, look at the preview and research, but you cannot change anything: file edits, commands, image generation and plans are not available, and nothing in the project changes. Answer questions, explain how things work, explore ideas and suggest concrete changes. When they want a change made, describe it briefly and tell them to switch to Build mode to apply it. Only take a screenshot when you need to see the page to answer.`
+
 /** Per-run context: the project map and the project's AGENTS.md (both capped). */
 export async function runContext(session: SandboxSession): Promise<string> {
   const result = await sh(

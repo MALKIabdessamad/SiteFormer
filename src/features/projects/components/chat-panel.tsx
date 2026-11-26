@@ -3,6 +3,9 @@ import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Eye, Loader2, PanelLeftClose, Trash2 } from 'lucide-react'
 import { AgentChat, type AgentRun } from '~/features/agent'
 import { CreditsChip, useAccount } from '~/features/billing'
+import { toErrorMessage } from '~/lib/utils/errors'
+import { setProjectMode } from '../api/projects.functions'
+import type { ProjectMode } from '../lib/constants'
 import type { Project } from '../types'
 import { StatusLine } from './status-dot'
 
@@ -24,6 +27,8 @@ type ChatPanelProps = {
   onConnectionLost: () => void
   onActivity: () => void
   onBusyChange: (busy: boolean) => void
+  /** Re-reads the project (after its mode was saved). */
+  onProjectChanged: () => Promise<unknown>
 }
 
 /** Conversation column: project header + the coding agent's chat. */
@@ -40,9 +45,27 @@ export function ChatPanel({
   onConnectionLost,
   onActivity,
   onBusyChange,
+  onProjectChanged,
 }: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const { account } = useAccount()
+  // The chosen mode shows at once; it's saved on the project (projects.mode) in the background.
+  const [pendingMode, setPendingMode] = useState<ProjectMode | null>(null)
+  const [modeError, setModeError] = useState('')
+  const mode = pendingMode ?? project.mode
+
+  const changeMode = async (next: ProjectMode) => {
+    setPendingMode(next)
+    setModeError('')
+    try {
+      await setProjectMode({ data: { projectId: project.id, mode: next } })
+      await onProjectChanged()
+    } catch (err) {
+      setModeError(toErrorMessage(err))
+    } finally {
+      setPendingMode(null)
+    }
+  }
 
   return (
     <section aria-label="Chat" className="flex h-full min-h-0 flex-col">
@@ -142,7 +165,15 @@ export function ChatPanel({
         onActivity={onActivity}
         onBusyChange={onBusyChange}
         outOfCredits={account !== null && account.credits < 1}
+        mode={mode}
+        onModeChange={(next) => void changeMode(next)}
+        modeSaving={pendingMode !== null}
       />
+      {modeError && (
+        <p role="alert" className="mx-3 mb-2 text-xs text-danger">
+          {modeError}
+        </p>
+      )}
     </section>
   )
 }

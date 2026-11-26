@@ -124,6 +124,7 @@ export async function postMessage(request: Request): Promise<Response> {
     userId: user.id,
     prompt,
     attachments,
+    mode: project.mode,
   })
   return resumeServerSentEventsResponse({
     adapter: memoryStream(

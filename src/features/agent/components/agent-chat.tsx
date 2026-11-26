@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent }
 import { ArrowUp, ChevronRight, Coins, History, Loader2, PencilLine, Square } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
-import type { Project } from '~/features/projects'
+import type { Project, ProjectMode } from '~/features/projects'
 import { useAgentChat } from '../hooks/use-agent-chat'
 import { useAttachments } from '../hooks/use-attachments'
 import { uploadParts } from '../lib/attachments'
@@ -12,6 +12,7 @@ import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns, type Segment } from '../lib/turns'
 import { CheckpointCard } from './checkpoint-card'
 import { Markdown } from './markdown'
+import { isModeShortcut, ModeMenu, nextMode } from './mode-menu'
 import { PlanCard, ToolStep } from './tool-step'
 
 const MAX_MESSAGE = 8000
@@ -29,6 +30,11 @@ type AgentChatProps = {
   onBusyChange?: (busy: boolean) => void
   /** No credits left: the composer offers to get more instead of sending. */
   outOfCredits?: boolean
+  /** Build (the agent edits) or Chat (read-only). Saved on the project. */
+  mode: ProjectMode
+  onModeChange: (mode: ProjectMode) => void
+  /** A mode change is being saved: sending waits for it. */
+  modeSaving?: boolean
 }
 
 export function AgentChat({
@@ -40,6 +46,9 @@ export function AgentChat({
   onActivity,
   onBusyChange,
   outOfCredits = false,
+  mode,
+  onModeChange,
+  modeSaving = false,
 }: AgentChatProps) {
   const chat = useAgentChat(project.id)
   const [draft, setDraft] = useState('')
@@ -97,7 +106,14 @@ export function AgentChat({
     event?.preventDefault()
     const text = draft.trim()
     const uploads = attachments.ready
-    if ((!text && uploads.length === 0) || busy || attachments.uploading || outOfCredits) return
+    if (
+      (!text && uploads.length === 0) ||
+      busy ||
+      attachments.uploading ||
+      outOfCredits ||
+      modeSaving
+    )
+      return
     setSendError('')
     setDraft('')
     attachments.clear()
@@ -269,46 +285,59 @@ export function AgentChat({
         )}
         <div
           className={cn(
-            'rounded-[26px] p-2 box-sculpted transition-colors focus-within:border-signal/60',
+            'rounded-[22px] p-2 box-sculpted transition-colors focus-within:border-signal/60',
             dragging && 'border-signal/70 bg-signal/5',
           )}
         >
           <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
-          <div className="flex items-end gap-2">
+          <label htmlFor="agent-input" className="sr-only">
+            Message the agent
+          </label>
+          <textarea
+            ref={inputRef}
+            id="agent-input"
+            rows={2}
+            value={draft}
+            maxLength={MAX_MESSAGE}
+            onChange={(e) => setDraft(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData.files)
+              if (files.length) {
+                e.preventDefault()
+                attachments.add(files)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (isModeShortcut(e)) {
+                e.preventDefault()
+                if (!modeSaving) onModeChange(nextMode(mode))
+              } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            placeholder={
+              project.status === 'provisioning'
+                ? 'Waiting for the sandbox…'
+                : busy
+                  ? 'The agent is working… (you can stop it)'
+                  : mode === 'chat'
+                    ? 'Ask anything about your project…'
+                    : 'Ask for a change…'
+            }
+            className="block min-h-12 w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-sm leading-5 outline-none placeholder:text-faint"
+          />
+          <div className="mt-1 flex items-center gap-1">
             <AttachButton onFiles={attachments.add} count={attachments.items.length} />
-            <label htmlFor="agent-input" className="sr-only">
-              Message the agent
-            </label>
-            <textarea
-              ref={inputRef}
-              id="agent-input"
-              rows={1}
-              value={draft}
-              maxLength={MAX_MESSAGE}
-              onChange={(e) => setDraft(e.target.value)}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files)
-                if (files.length) {
-                  e.preventDefault()
-                  attachments.add(files)
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void send()
-                }
-              }}
-              placeholder={busy ? 'The agent is working… (you can stop it)' : 'Ask for a change…'}
-              className="block min-h-10 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2.5 text-sm leading-5 outline-none placeholder:text-faint"
-            />
+            <ModeMenu mode={mode} disabled={modeSaving} onChange={onModeChange} />
+            <span className="flex-1" />
             {busy ? (
               <button
                 type="button"
                 onClick={() => void chat.cancel(activeRun?.id ?? chat.runId ?? undefined)}
                 aria-label="Stop the agent"
                 title="Stop"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink box-sculpted hover:border-white/35"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink box-sculpted hover:border-white/35"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
               </button>
@@ -318,11 +347,12 @@ export function AgentChat({
                 disabled={
                   (!draft.trim() && attachments.ready.length === 0) ||
                   attachments.uploading ||
-                  outOfCredits
+                  outOfCredits ||
+                  modeSaving
                 }
                 title={attachments.uploading ? 'Uploading files…' : undefined}
                 aria-label="Send"
-                className="grid h-10 w-10 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
+                className="grid h-9 w-9 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ArrowUp className="h-4 w-4" />
               </button>

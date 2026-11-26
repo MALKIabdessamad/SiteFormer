@@ -181,6 +181,11 @@ export function attachmentsMiddleware(session: SandboxSession): ChatMiddleware {
     if (!upload) return '[Attachment no longer available]'
     const where = upload.project_path ? ` → ${upload.project_path}` : ''
     const shown = session.attachedImages.has(id)
+    // Chat mode doesn't copy attachments into the project: documents come inline.
+    const text = session.attachedTexts.get(id)
+    if (text !== undefined) return `[Attached file "${upload.name}"]\n${text}`
+    if (upload.kind === 'image' && !upload.project_path)
+      return `[Attached image "${upload.name}"${shown ? ' (shown below)' : ''}]`
     return upload.kind === 'image'
       ? `[Attached image "${upload.name}"${where}${upload.project_path ? ` (use as /${upload.project_path.replace(/^public\//, '')}${shown ? '; shown below' : '; view_image to look at it'})` : ''}]`
       : `[Attached file "${upload.name}"${where}${upload.project_path ? ' (read it with read_file)' : ''}]`

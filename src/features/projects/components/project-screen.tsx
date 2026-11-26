@@ -144,6 +144,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           onConnectionLost={reconnectChat}
           onActivity={refreshRuns}
           onBusyChange={setChatBusy}
+          onProjectChanged={refresh}
         />
       </div>
       <div

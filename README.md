@@ -54,6 +54,10 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   tool calls are closed out so the model can redo them). Opening a project also self-heals.
 - **No time limit.** Only safety caps: `AGENT_MAX_STEPS` model turns per run, per-command
   timeouts inside the sandbox. The user can press **Stop** at any time.
+- **Build / Chat mode** (composer chip, ⌥P / Alt+P; saved in `projects.mode`, recorded per run
+  in `agent_runs.mode`). Chat runs get read-only tools only (read/search files, preview,
+  screenshots, research), make no checkpoints and don't copy attachments into the project;
+  the server enforces it, not just the UI.
 - **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
   checkpoint card: _Undo these changes_ / _Restore to here_. A restore is a new commit (undoable)
   and adds a note to the transcript so the model knows.

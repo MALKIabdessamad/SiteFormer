@@ -19,15 +19,21 @@ import { requireCredits, type UserPlan } from '~/lib/server/billing/credits.serv
 import { log } from '~/lib/server/log.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { ownedProject, provisionTarget, saveProject } from '~/lib/server/projects.server'
+import { rateLimiter } from '~/lib/server/rate-limit'
 import { requireUser } from '~/lib/server/require-user'
 import { deleteInstance } from '~/lib/server/sandbox/agent37.server'
 import { ensureProvisioned, ensureRunning, isBusy } from '~/lib/server/sandbox/provision.server'
 import { supabaseAdmin } from '~/lib/server/supabase-admin.server'
 import { validate } from '~/lib/server/validate'
-import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from '../lib/constants'
+import { PROJECT_MODES, PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from '../lib/constants'
 import { nameFromPrompt } from '../lib/project-name'
 
 const ProjectIdInput = validate(z.object({ projectId: z.uuid('Project not found.') }))
+
+const ModeInput = validate(
+  z.object({ projectId: z.uuid('Project not found.'), mode: z.enum(PROJECT_MODES) }),
+)
+const allowModeChange = rateLimiter(60)
 
 const CreateInput = validate(
   z.object({
@@ -158,6 +164,21 @@ export const openProject = createServerFn({ method: 'POST' })
       if (project.status === 'provisioning') background(ensureProvisioned(provisionTarget(project)))
       if (project.status === 'ready') background(ensureRunning(provisionTarget(project)))
       return { ok: true }
+    }),
+  )
+
+/** Saves the composer mode (Build / Chat) the user picked for this project. */
+export const setProjectMode = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(ModeInput)
+  .handler(({ data, context }) =>
+    safely('setProjectMode', async () => {
+      if (!allowModeChange(context.user.id)) {
+        throw new AppError('Too many changes. Wait a moment.', 'limit')
+      }
+      const project = await ownedProject(context.user.id, data.projectId)
+      if (project.mode !== data.mode) await saveProject(project.id, { mode: data.mode })
+      return { mode: data.mode }
     }),
   )
 

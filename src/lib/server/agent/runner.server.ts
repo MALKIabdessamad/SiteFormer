@@ -30,6 +30,7 @@ import { memoryMiddleware } from '@tanstack/ai-memory'
 import { createOpenRouterText } from '@tanstack/ai-openrouter'
 import { isTerminalRunStatus, withPersistence } from '@tanstack/ai-persistence'
 import { uploadSource } from '~/features/agent/lib/upload-ref'
+import type { ProjectMode } from '~/features/projects/lib/constants'
 import { AppError } from '../app-error'
 import { errorFields, log as logger, preview } from '../log.server'
 import { serverEnv } from '../env.server'
@@ -57,12 +58,14 @@ import {
   type UploadRow,
 } from './uploads.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
-import { runContext, SYSTEM_PROMPT } from './prompt.server'
-import { projectSession, type SandboxSession } from './sandbox-session.server'
+import { CHAT_MODE_PROMPT, runContext, SYSTEM_PROMPT } from './prompt.server'
+import { capText, projectSession, type SandboxSession } from './sandbox-session.server'
 import { agentTools } from './tools/index.server'
 import { restartDevServer } from './tools/shell.server'
 
 const RUN_ID = /^[A-Za-z0-9_-]{8,100}$/
+/** Chat mode: attached text files are given to the model inline, up to this many characters. */
+const CHAT_DOCUMENT_MAX = 20_000
 const SANDBOX_POLL_MS = 3000
 /** A queued run gives up waiting for its sandbox after a day (only if nobody fixes the setup). */
 const MAX_QUEUE_WAIT_MS = 24 * 60 * 60 * 1000
@@ -164,6 +167,8 @@ export async function enqueueRun(input: {
   prompt: string
   /** Validated uploads (see resolveUploads). */
   attachments?: Array<UploadRow>
+  /** Chat runs only read the project. Default: build. */
+  mode?: ProjectMode
 }): Promise<{ runId: string }> {
   const attachments = input.attachments ?? []
   const { runId, projectId, userId } = input
@@ -179,16 +184,19 @@ export async function enqueueRun(input: {
     return { runId } // retried request: already queued
   }
 
-  const { error } = await supabaseAdmin().from('agent_runs').insert({
-    id: runId,
-    project_id: projectId,
-    user_id: userId,
-    prompt,
-    status: 'queued',
-    // Claimed at birth: no other process may recover it while this one starts driving it.
-    lease_owner: WORKER,
-    lease_until: leaseUntil(),
-  })
+  const { error } = await supabaseAdmin()
+    .from('agent_runs')
+    .insert({
+      id: runId,
+      project_id: projectId,
+      user_id: userId,
+      prompt,
+      status: 'queued',
+      mode: input.mode ?? 'build',
+      // Claimed at birth: no other process may recover it while this one starts driving it.
+      lease_owner: WORKER,
+      lease_until: leaseUntil(),
+    })
   if (error) {
     if (error.code === '23505') {
       throw new AppError(
@@ -294,6 +302,7 @@ function agentStream(
     env.OPENROUTER_API_KEY,
   )
   const systemPrompts = [SYSTEM_PROMPT, context]
+  if (row.mode === 'chat') systemPrompts.push(CHAT_MODE_PROMPT)
   if (resumed) {
     systemPrompts.push(
       'Note: your previous run on this request was interrupted by a server restart. Check the ' +
@@ -307,7 +316,7 @@ function agentStream(
     // Server-authoritative: the transcript (with the user's message) is loaded from storage.
     messages: [],
     systemPrompts,
-    tools: agentTools(session),
+    tools: agentTools(session, row.mode),
     reasoning: env.AGENT_REASONING,
     agentLoopStrategy: maxIterations(env.AGENT_MAX_STEPS),
     abortController: controller,
@@ -348,12 +357,24 @@ async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
     .filter((u) => u.run_id === row.id)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
   if (mine.length) {
-    const copied = await copyUploadsIntoProject(session, mine, (bytes, upload) =>
-      optimizeImage(session, bytes, upload.mime),
-    )
-    uploads = await projectUploads(row.project_id)
-    for (const upload of copied) {
-      if (upload.kind !== 'image' || upload.mime === 'image/svg+xml') continue
+    // Build: the files become part of the site. Chat: the project must not change, so the
+    // model gets them straight from storage (images shown, text inline).
+    const files =
+      row.mode === 'build'
+        ? await copyUploadsIntoProject(session, mine, (bytes, upload) =>
+            optimizeImage(session, bytes, upload.mime),
+          )
+        : mine
+    if (row.mode === 'build') uploads = await projectUploads(row.project_id)
+    for (const upload of files) {
+      if (upload.kind === 'document') {
+        if (row.mode === 'chat') {
+          const text = (await downloadUpload(upload)).toString('utf8')
+          session.attachedTexts.set(upload.id, capText(text, CHAT_DOCUMENT_MAX))
+        }
+        continue
+      }
+      if (upload.mime === 'image/svg+xml') continue
       const bytes = await downloadUpload(upload)
       if (bytes.byteLength <= 5_000_000) {
         session.attachedImages.set(upload.id, {
@@ -362,11 +383,12 @@ async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
         })
       }
     }
-    logger.info('Attachments copied into the project', {
+    logger.info('Attachments prepared', {
       event: 'agent.attachments',
       runId: row.id,
       projectId: row.project_id,
-      files: copied.map((u) => u.project_path),
+      mode: row.mode,
+      files: files.map((u) => u.project_path ?? u.name),
     })
   }
   session.uploads = new Map(
@@ -467,7 +489,8 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
     await ensureRepo(session)
     await restartDevServer(session, { force: false })
     await prepareAttachments(session, row)
-    if (!row.checkpoint_before) {
+    // Chat runs change nothing, so they get no checkpoints (and no Undo).
+    if (row.mode === 'build' && !row.checkpoint_before) {
       const before = await commitAll(session, `Before: ${row.prompt}`)
       await updateRun(runId, { checkpoint_before: before })
       row = { ...row, checkpoint_before: before }

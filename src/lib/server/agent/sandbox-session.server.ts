@@ -38,6 +38,8 @@ export type SandboxSession = {
   attachedImages: Map<string, { mime: string; base64: string }>
   /** Project paths read with read_file in this run (edit_file failure hints). */
   readPaths: Set<string>
+  /** Chat mode: text of this run's attached documents (they aren't copied into the project). */
+  attachedTexts: Map<string, string>
 }
 
 /**
@@ -65,6 +67,7 @@ export function projectSession(
     uploads: new Map(),
     attachedImages: new Map(),
     readPaths: new Set(),
+    attachedTexts: new Map(),
   }
 }
 

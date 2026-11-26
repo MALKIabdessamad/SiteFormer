@@ -1,6 +1,7 @@
 /**
  * Server-side project helpers shared by the server functions and the agent runner.
  */
+import type { ProjectMode } from '~/features/projects/lib/constants'
 import { AppError } from './app-error'
 import type { ProvisionTarget, SandboxPatch } from './sandbox/provision.server'
 import { supabaseAdmin } from './supabase-admin.server'
@@ -13,9 +14,10 @@ export type ProjectRow = {
   sandbox_id: string | null
   preview_url: string | null
   error: string | null
+  mode: ProjectMode
 }
 
-const COLUMNS = 'id, user_id, name, status, sandbox_id, preview_url, error'
+const COLUMNS = 'id, user_id, name, status, sandbox_id, preview_url, error, mode'
 
 /** The project, or null if it doesn't exist. */
 export async function getProject(projectId: string): Promise<ProjectRow | null> {
@@ -35,7 +37,10 @@ export async function ownedProject(userId: string, projectId: string): Promise<P
   return project
 }
 
-export async function saveProject(projectId: string, patch: SandboxPatch | { name: string }) {
+export async function saveProject(
+  projectId: string,
+  patch: SandboxPatch | { name: string } | { mode: ProjectMode },
+) {
   const { error } = await supabaseAdmin().from('projects').update(patch).eq('id', projectId)
   if (error) throw new Error(`Could not save project ${projectId}: ${error.message}`)
 }

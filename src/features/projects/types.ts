@@ -1,3 +1,5 @@
+import type { ProjectMode } from './lib/constants'
+
 export type ProjectStatus = 'provisioning' | 'ready' | 'failed'
 
 /** A row of `public.projects` as the browser sees it (RLS: own rows only). */
@@ -10,6 +12,7 @@ export type Project = {
   sandbox_id: string | null
   preview_url: string | null
   error: string | null
+  mode: ProjectMode
   created_at: string
   updated_at: string
 }

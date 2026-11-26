@@ -7,7 +7,7 @@ import type { Project, ProjectSummary } from '../types'
 
 const SUMMARY_COLUMNS = 'id, name, status, updated_at'
 const PROJECT_COLUMNS =
-  'id, user_id, name, prompt, status, sandbox_id, preview_url, error, created_at, updated_at'
+  'id, user_id, name, prompt, status, sandbox_id, preview_url, error, mode, created_at, updated_at'
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const { data, error } = await getSupabase()
