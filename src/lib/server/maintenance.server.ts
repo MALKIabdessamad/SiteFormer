@@ -15,7 +15,8 @@ import { log } from './log.server'
 import { supabaseAdmin } from './supabase-admin.server'
 import { deleteInstance, listInstances } from './sandbox/agent37.server'
 import { appEnv } from './sandbox/app-env'
-import { removeProjectScreenshots, screenshotProjectFolders } from './agent/screenshots.server'
+import { removeProjectScreenshots, SCREENSHOT_BUCKET } from './agent/screenshots.server'
+import { listFolders } from './storage.server'
 import { removeProjectUploads, removeUnsentUploads, UPLOAD_BUCKET } from './agent/uploads.server'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -34,18 +35,6 @@ async function existingProjects(ids: Array<string>): Promise<Set<string>> {
     for (const row of data ?? []) found.add(row.id)
   }
   return found
-}
-
-async function uploadProjectFolders(): Promise<Array<string>> {
-  const out: Array<string> = []
-  for (let offset = 0; ; offset += 1000) {
-    const { data, error } = await supabaseAdmin()
-      .storage.from(UPLOAD_BUCKET)
-      .list('', { limit: 1000, offset })
-    if (error) throw error
-    out.push(...(data ?? []).filter((e) => e.id === null).map((e) => e.name))
-    if (!data || data.length < 1000) return out
-  }
 }
 
 async function sweepSandboxes(): Promise<number> {
@@ -74,8 +63,8 @@ async function sweepSandboxes(): Promise<number> {
 }
 
 async function sweepStorage(): Promise<number> {
-  const screenshots = (await screenshotProjectFolders()).filter((f) => UUID.test(f))
-  const uploads = (await uploadProjectFolders()).filter((f) => UUID.test(f))
+  const screenshots = (await listFolders(SCREENSHOT_BUCKET)).filter((f) => UUID.test(f))
+  const uploads = (await listFolders(UPLOAD_BUCKET)).filter((f) => UUID.test(f))
   const live = await existingProjects([...new Set([...screenshots, ...uploads])])
   let removed = 0
   for (const id of screenshots) if (!live.has(id)) removed += await removeProjectScreenshots(id)

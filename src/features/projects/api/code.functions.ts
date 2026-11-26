@@ -11,7 +11,7 @@ import { z } from 'zod'
 import { commitAll, ensureRepo } from '~/lib/server/agent/checkpoints.server'
 import { appendAssistantNote, hasActiveRun } from '~/lib/server/agent/runner.server'
 import {
-  createSession,
+  projectSession,
   relativePath,
   sh,
   shellQuote,
@@ -21,10 +21,10 @@ import {
   type SandboxSession,
 } from '~/lib/server/agent/sandbox-session.server'
 import { restartDevServer } from '~/lib/server/agent/tools/shell.server'
-import { serverEnv } from '~/lib/server/env.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
 import { ownedProject } from '~/lib/server/projects.server'
+import { rateLimiter } from '~/lib/server/rate-limit'
 import { requireUser } from '~/lib/server/require-user'
 import { validate } from '~/lib/server/validate'
 
@@ -60,19 +60,21 @@ function editablePath(input: string): string {
   return absolute
 }
 
-async function sessionFor(userId: string, projectId: string): Promise<SandboxSession> {
+// Every call runs a command in the sandbox: cap them per user.
+const allowRead = rateLimiter(120)
+const allowSave = rateLimiter(30)
+
+async function sessionFor(
+  userId: string,
+  projectId: string,
+  allow: (key: string) => boolean,
+): Promise<SandboxSession> {
+  if (!allow(userId)) throw new AppError('Too many requests. Wait a moment.', 'limit')
   const project = await ownedProject(userId, projectId)
   if (project.status !== 'ready' || !project.sandbox_id) {
     throw new AppError('The sandbox is not ready yet.', 'unavailable')
   }
-  return createSession({
-    sandboxId: project.sandbox_id,
-    projectId: project.id,
-    userId: project.user_id,
-    runId: `manual-${Date.now()}`,
-    signal: new AbortController().signal,
-    previewPort: serverEnv().STARTER_PORT,
-  })
+  return projectSession({ ...project, sandbox_id: project.sandbox_id }, `manual-${Date.now()}`)
 }
 
 type FileRead =
@@ -106,7 +108,7 @@ export const listProjectFiles = createServerFn({ method: 'POST' })
   .validator(ListInput)
   .handler(({ data, context }) =>
     safely('listProjectFiles', async () => {
-      const session = await sessionFor(context.user.id, data.projectId)
+      const session = await sessionFor(context.user.id, data.projectId, allowRead)
       const result = await sh(
         session,
         `if [ -d .git ]; then git ls-files --cached --others --exclude-standard; ` +
@@ -125,7 +127,7 @@ export const readProjectFile = createServerFn({ method: 'POST' })
   .validator(ReadInput)
   .handler(({ data, context }) =>
     safely('readProjectFile', async () => {
-      const session = await sessionFor(context.user.id, data.projectId)
+      const session = await sessionFor(context.user.id, data.projectId, allowRead)
       const file = await readFile(session, editablePath(data.path))
       if (file.kind === 'missing') throw new AppError('This file no longer exists.', 'not_found')
       if (file.kind !== 'text') return { kind: file.kind, size: file.size }
@@ -145,7 +147,7 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
   .handler(({ data, context }) =>
     safely('saveProjectFile', async () => {
       const absolute = editablePath(data.path)
-      const session = await sessionFor(context.user.id, data.projectId)
+      const session = await sessionFor(context.user.id, data.projectId, allowSave)
       if (await hasActiveRun(data.projectId)) {
         throw new AppError('The agent is working. Save when it’s done.', 'limit')
       }
@@ -168,7 +170,9 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
       const [added = '0', removed = '0'] = stat.stdout.trim().split(/\s+/)
       // Dependencies or build config changed: install / restart so the preview keeps working.
       if (/^(package\.json|bun\.lockb?)$/.test(path)) {
-        const install = await sh(session, 'bun install 2>&1 | tail -15', { timeoutSeconds: 300 })
+        const install = await sh(session, 'set -o pipefail; bun install 2>&1 | tail -15', {
+          timeoutSeconds: 300,
+        })
         if (install.exitCode !== 0) {
           log.warn('bun install after manual edit failed', {
             event: 'code.install_failed',

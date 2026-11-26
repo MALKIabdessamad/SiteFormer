@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react'
 
 /** Live result of a CSS media query. `serverValue` is used during SSR. */
-export function useMediaQuery(query: string, serverValue = false): boolean {
+function useMediaQuery(query: string, serverValue = false): boolean {
   const subscribe = useCallback(
     (onChange: () => void) => {
       const mql = window.matchMedia(query)

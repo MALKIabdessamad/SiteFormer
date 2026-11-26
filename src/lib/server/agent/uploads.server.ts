@@ -9,7 +9,8 @@
  * The model sees attached images once (the run's first model call), then only their paths.
  */
 import { AppError } from '../app-error'
-import { log } from '../log.server'
+import { errorFields, log } from '../log.server'
+import { removeFiles, removeFolder } from '../storage.server'
 import { supabaseAdmin } from '../supabase-admin.server'
 import {
   relativePath,
@@ -21,13 +22,12 @@ import {
 } from './sandbox-session.server'
 
 export const UPLOAD_BUCKET = 'agent-uploads'
-export const UPLOAD_SCHEME = 'sf-upload:'
 const MAX_BYTES = 10 * 1024 * 1024
 const MAX_PER_PROJECT = 300
 /** Raster images above this are re-encoded to WebP (max 2000 px) when copied into the site. */
 const OPTIMIZE_ABOVE_BYTES = 600 * 1024
 
-export type UploadKind = 'image' | 'document'
+type UploadKind = 'image' | 'document'
 export type UploadRow = {
   id: string
   project_id: string
@@ -290,34 +290,15 @@ export async function attachUploads(runId: string, uploads: Array<UploadRow>): P
   if (error) throw error
 }
 
-async function removePaths(paths: Array<string>): Promise<void> {
-  for (let i = 0; i < paths.length; i += 100) {
-    const { error } = await supabaseAdmin()
-      .storage.from(UPLOAD_BUCKET)
-      .remove(paths.slice(i, i + 100))
-    if (error) throw error
-  }
-}
-
 /** Removes every uploaded file of a project from Storage (database rows cascade). */
 export async function removeProjectUploads(projectId: string): Promise<number> {
   try {
-    const paths: Array<string> = []
-    for (let offset = 0; ; offset += 1000) {
-      const { data, error } = await supabaseAdmin()
-        .storage.from(UPLOAD_BUCKET)
-        .list(projectId, { limit: 1000, offset })
-      if (error) throw error
-      paths.push(...(data ?? []).filter((f) => f.id !== null).map((f) => `${projectId}/${f.name}`))
-      if (!data || data.length < 1000) break
-    }
-    await removePaths(paths)
-    return paths.length
+    return await removeFolder(UPLOAD_BUCKET, projectId)
   } catch (error) {
     log.error('Removing project uploads failed', {
       event: 'uploads.remove_failed',
       projectId,
-      error: error instanceof Error ? error.message : String(error),
+      ...errorFields(error),
     })
     return 0
   }
@@ -335,7 +316,10 @@ export async function removeUnsentUploads(maxAgeMs: number): Promise<number> {
     .returns<Array<{ id: string; storage_path: string }>>()
   if (error) throw error
   if (!data?.length) return 0
-  await removePaths(data.map((row) => row.storage_path))
+  await removeFiles(
+    UPLOAD_BUCKET,
+    data.map((row) => row.storage_path),
+  )
   const { error: deleteError } = await supabaseAdmin()
     .from('agent_uploads')
     .delete()

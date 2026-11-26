@@ -6,19 +6,9 @@
 import { AppError } from './app-error'
 import { authenticate } from './auth.server'
 import { log } from './log.server'
+import { rateLimiter } from './rate-limit'
 
-const PER_MINUTE = 20
-const recent = new Map<string, Array<number>>()
-
-function allow(userId: string): boolean {
-  const now = Date.now()
-  const hits = (recent.get(userId) ?? []).filter((t) => now - t < 60_000)
-  if (hits.length >= PER_MINUTE) return false
-  hits.push(now)
-  recent.set(userId, hits)
-  if (recent.size > 5000) recent.clear() // bound memory
-  return true
-}
+const allow = rateLimiter(20)
 
 const clip = (value: unknown, max: number) =>
   typeof value === 'string' ? value.slice(0, max) : undefined

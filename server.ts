@@ -5,11 +5,13 @@
  * - Hands every other request to the TanStack Start handler for SSR.
  * - Exposes /healthz for Railway's health check.
  * - Adds baseline security headers and shuts down gracefully on SIGTERM.
- * - At boot, resumes AI agent runs a previous process left unfinished (deploys/crashes).
+ * - Resumes AI agent runs a previous process left unfinished (deploys/crashes) and runs the
+ *   periodic cleanup (maintenance.server.ts).
  *
  * Build first with `bun run build`, then `bun run start`.
  */
 import { join, normalize } from 'node:path'
+import { inspect } from 'node:util'
 
 /** Same JSON-line format as src/lib/server/log.server.ts (Railway parses the fields). */
 function log(
@@ -20,6 +22,29 @@ function log(
   const line = JSON.stringify({ level, message, time: new Date().toISOString(), ...fields })
   if (level === 'info') process.stdout.write(`${line}\n`)
   else process.stderr.write(`${line}\n`)
+}
+
+const isAbort = (value: unknown) => (value as { name?: unknown } | null)?.name === 'AbortError'
+
+// Libraries print with console.* (often multi-line objects): keep every line JSON so Railway can
+// parse it, and don't report a client that disconnected mid-request as an error.
+for (const level of ['error', 'warn'] as const) {
+  console[level] = (...args: Array<unknown>) => {
+    if (args.some(isAbort)) {
+      log('info', 'Client closed the connection', { event: 'http.client_closed' })
+      return
+    }
+    const text = args
+      .map((a) =>
+        typeof a === 'string'
+          ? a
+          : a instanceof Error
+            ? `${a.name}: ${a.message}`
+            : inspect(a, { depth: 2, breakLength: Infinity }),
+      )
+      .join(' ')
+    log(level, text.slice(0, 2000), { event: 'console' })
+  }
 }
 
 const CLIENT_DIR = join(import.meta.dir, 'dist', 'client')
@@ -44,6 +69,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
   'Cross-Origin-Opener-Policy': 'same-origin',
+  // Baseline CSP that can't break the app (TanStack's hydration uses inline scripts, the preview
+  // is an iframe of another origin): no plugins, no <base> hijacking, no framing of this app,
+  // forms only to this origin.
+  'Content-Security-Policy':
+    "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
   // Railway terminates TLS, so every public request is HTTPS in production.
   ...(IS_PROD ? { 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains' } : {}),
 }
@@ -88,6 +118,9 @@ const server = Bun.serve({
   // Agent progress streams stay open while tools run; 255 s is Bun's maximum. Clients
   // reconnect and resume (Last-Event-ID) if a connection is ever closed.
   idleTimeout: 255,
+  // Largest legitimate body is a 10 MB upload (multipart overhead included); refuse more before
+  // it is buffered in memory.
+  maxRequestBodySize: 12 * 1024 * 1024,
   async fetch(request) {
     const { pathname } = new URL(request.url)
 
@@ -107,11 +140,13 @@ const server = Bun.serve({
     // One line per app request (static files and health checks are skipped). For streams
     // (agent progress) `ms` is the time to the first byte, not the stream's length.
     const status = response.status
+    // A request the client abandoned (tab closed, navigation) isn't a server error.
+    const clientGone = request.signal.aborted
     log(
-      status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info',
-      `${request.method} ${pathname} ${status}`,
+      clientGone ? 'info' : status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info',
+      `${request.method} ${pathname} ${clientGone ? 'client closed' : status}`,
       {
-        event: 'http',
+        event: clientGone ? 'http.client_closed' : 'http',
         method: request.method,
         path: pathname,
         status,
@@ -143,79 +178,45 @@ async function shutdown(signal: string) {
   stopping = true
   log('info', `${signal} received, shutting down`, { event: 'shutdown', signal })
   // Let normal requests finish, then close the long-lived agent streams (clients resume them
-  // on the new instance; unfinished runs are resumed by its boot recovery).
+  // on the new instance; unfinished runs are resumed by its recovery).
   const forceClose = setTimeout(() => void server.stop(true), 5000)
   await server.stop()
   clearTimeout(forceClose)
   process.exit(0)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
-
-// Resume agent runs left unfinished by the previous process.
-void Promise.resolve(
-  app.fetch(
-    new Request(`http://localhost:${PORT}/api/agent?action=recover`, {
-      method: 'POST',
-      headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
-    }),
-  ),
-)
-  .then(async (res) =>
-    log('info', 'Agent boot recovery', {
-      event: 'agent.boot_recovery',
-      status: res.status,
-      result: await res.text(),
-    }),
-  )
-  .catch((err) =>
-    log('error', 'Agent boot recovery failed', {
-      event: 'agent.boot_recovery_failed',
-      error: String(err),
-    }),
-  )
 process.on('SIGINT', () => void shutdown('SIGINT'))
 
-// Cleanup of orphaned sandboxes/files and unsent uploads (see maintenance.server.ts): shortly
-// after boot, then every 6 hours.
-const MAINTENANCE_EVERY_MS = 6 * 60 * 60 * 1000
-function maintenance() {
+/** Calls an internal agent endpoint (recover / maintenance) with this process's token. */
+async function internal(action: 'recover' | 'maintenance'): Promise<void> {
   if (stopping) return
-  void Promise.resolve(
-    app.fetch(
-      new Request(`http://localhost:${PORT}/api/agent?action=maintenance`, {
+  try {
+    const res = await app.fetch(
+      new Request(`http://localhost:${PORT}/api/agent?action=${action}`, {
         method: 'POST',
         headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
-      }),
-    ),
-  )
-    .then(async (res) => {
-      if (!res.ok)
-        log('error', 'Maintenance request failed', {
-          event: 'maintenance.request_failed',
-          status: res.status,
-          result: await res.text(),
-        })
-    })
-    .catch((err) =>
-      log('error', 'Maintenance request failed', {
-        event: 'maintenance.request_failed',
-        error: String(err),
       }),
     )
+    const result = await res.text()
+    if (!res.ok)
+      log('error', `Internal ${action} failed`, {
+        event: `${action}.failed`,
+        status: res.status,
+        result,
+      })
+    else if (action === 'recover' && result !== '{"resumed":0}')
+      log('info', 'Agent runs recovered', { event: 'agent.recovery', result })
+  } catch (error) {
+    log('error', `Internal ${action} failed`, { event: `${action}.failed`, error: String(error) })
+  }
 }
-setTimeout(maintenance, 2 * 60 * 1000).unref()
 
-// Runs whose process died (lease expired) are picked up within half a minute, including runs a
-// previous deploy was still finishing when this process booted.
-setInterval(() => {
-  if (stopping) return
-  void Promise.resolve(
-    app.fetch(
-      new Request(`http://localhost:${PORT}/api/agent?action=recover`, {
-        method: 'POST',
-        headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
-      }),
-    ),
-  ).catch(() => undefined)
-}, 30_000).unref()
-setInterval(maintenance, MAINTENANCE_EVERY_MS).unref()
+// Resume runs a previous process left unfinished, now and every 30 s (runs whose process died
+// are picked up once their lease expires, including ones a previous deploy was finishing).
+void internal('recover')
+setInterval(() => void internal('recover'), 30_000).unref()
+
+// Cleanup of orphaned sandboxes/files and unsent uploads (maintenance.server.ts): shortly after
+// boot, then every 6 hours.
+setTimeout(() => void internal('maintenance'), 2 * 60 * 1000).unref()
+setInterval(() => void internal('maintenance'), 6 * 60 * 60 * 1000).unref()

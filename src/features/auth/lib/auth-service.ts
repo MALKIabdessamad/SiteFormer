@@ -22,7 +22,7 @@ export const AFTER_SIGN_IN_PATH = '/dashboard'
  * Password-reset links land on `/?reset=1`, so the auth page knows to ask for a new
  * password instead of redirecting the (now signed-in) user to the dashboard.
  */
-export const RESET_PASSWORD_PATH = '/?reset=1'
+const RESET_PASSWORD_PATH = '/?reset=1'
 
 async function attempt<T>(fn: () => Promise<T>): Promise<AuthResult<T>> {
   try {

@@ -112,7 +112,9 @@ export function fileTools(session: SandboxSession) {
   const writeFile = toolDefinition({
     name: 'write_file',
     description:
-      'Create a new file or fully replace a small one. For changes to existing files prefer edit_file.',
+      'Create a file, or replace one entirely, with its COMPLETE content in one call (up to 400 KB, ' +
+      'so even long pages fit). Never build files in pieces or append with shell heredocs. For ' +
+      'changes to existing files prefer edit_file.',
     inputSchema: z.object({ path: z.string(), content: z.string().max(400_000) }),
   }).server(async ({ path, content }) => {
     const absolute = sitePath(path)

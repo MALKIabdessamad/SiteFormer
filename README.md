@@ -90,50 +90,52 @@ Prettier · Docker on Railway
 
 ```
 src/
-├── routes/                  # File-based routes (thin: compose features only)
-│   ├── __root.tsx           # HTML shell, <head>, fonts, global CSS
-│   ├── index.tsx            # "/" → <AuthScreen/> (`mode`, `reset` search params)
-│   └── _authenticated/      # Client-only layout that requires a user (requireUser guard)
-│       ├── route.tsx
-│       ├── dashboard.tsx    # "/dashboard" → <DashboardScreen/>
-│       └── project.$projectId.tsx  # "/project/$id" → <ProjectScreen/>
-├── features/
-│   ├── auth/                # Everything auth, exposed through index.ts
-│   │   ├── components/      # AuthScreen (step picker), forms, layout, brand panel
-│   │   ├── hooks/           # useAuthSession, useRedirectOnSignOut, useFormStatus
-│   │   ├── lib/             # authService (→ AuthResult), requireUser guard, copy
-│   │   └── index.ts         # Public API: import from '~/features/auth'
-│   ├── dashboard/           # Dashboard UI
-│   │   ├── components/      # DashboardScreen, AppSidebar, PromptBox, MobileTopBar
-│   │   └── hooks/           # useSidebar (collapse, mobile drawer, Ctrl/⌘ B, Esc)
-│   └── projects/            # Projects + sandboxes
-│       ├── api/             # projects.functions.ts (server fns: create/open/retry/delete)
-│       │                    # projects.queries.ts (browser reads under RLS + Realtime)
-│       ├── components/      # ProjectScreen, ChatPanel, PreviewPanel
-│       ├── hooks/           # useProjects, useProject (live)
-│       └── lib/             # project-name.ts (sanitising), constants
-├── components/
-│   ├── ui/                  # Reusable primitives: Button, Input, PasswordInput, Alert…
-│   ├── brand/               # Logo
-│   └── not-found.tsx
-├── hooks/                   # Shared hooks (useMediaQuery, useIsDesktop)
+├── routes/                     # File-based routes (thin: compose features only)
+│   ├── __root.tsx              # HTML shell, <head>, fonts, global CSS
+│   ├── index.tsx               # "/" → <AuthScreen/> (`mode`, `reset` search params)
+│   ├── _authenticated/         # Client-only layout that requires a user (requireUser guard)
+│   │   ├── dashboard.tsx       # "/dashboard" → <DashboardScreen/>
+│   │   ├── project.$projectId.tsx  # "/project/$id" → <ProjectScreen/>
+│   │   └── billing.tsx         # "/billing" → <BillingScreen/>
+│   └── api/                    # agent.ts (chat, cancel, internal recover/maintenance),
+│                               # uploads.ts, log.ts (browser error reports)
+├── features/                   # Each feature exposes its public API in index.ts
+│   ├── auth/                   # Sign in/up/reset: AuthScreen, authService, requireUser guard
+│   ├── dashboard/              # DashboardScreen, AppSidebar, PromptBox, MobileTopBar
+│   ├── projects/               # ProjectScreen, preview + code tabs, server fns (create/open/
+│   │                           # retry/delete, code read/save), RLS reads + Realtime
+│   ├── agent/                  # AgentChat, tool steps, attachments, checkpoints (restore),
+│   │                           # runs (useAgentRuns); lib/upload-ref.ts is shared with the server
+│   └── billing/                # BillingScreen, CreditsChip, useAccount, (mock) checkout fns;
+│                               # lib/credits.ts (credit math) is shared with the server
+├── components/                 # ui/ primitives (Button, Input, Alert…), brand/ (Logo)
+├── hooks/                      # Shared hooks (useIsDesktop)
 ├── lib/
-│   ├── supabase/client.ts   # Browser-only Supabase singleton
-│   ├── utils/               # cn(), toErrorMessage(), storage (never throws)
-│   └── server/              # Server-only (*.server.ts can't be imported by browser code)
-│       ├── env.server.ts    # Validated secrets
+│   ├── supabase/client.ts      # Browser-only Supabase singleton
+│   ├── report-error.ts         # Browser errors → server logs (/api/log)
+│   ├── utils/                  # cn(), toErrorMessage(), storage (never throws)
+│   └── server/                 # Server-only (*.server.ts can't be imported by browser code)
+│       ├── env.server.ts       # Validated secrets and settings
 │       ├── auth.server.ts, require-user.ts   # Verify the Supabase access token
-│       ├── supabase-admin.server.ts          # Secret-key client (only writer of projects)
-│       ├── errors.server.ts # AppError + safely(): only safe messages reach the browser
-│       ├── sandbox/         # agent37.server.ts (API client), provision.server.ts (setup)
-│       └── ai/              # naming.server.ts (TanStack AI + OpenRouter, structured output)
-├── config/                  # env.ts (validated public env), site.ts (name, meta)
-├── styles/globals.css       # Tailwind v4 theme tokens + sculpted utilities
-└── router.tsx               # Router factory
-├── start.ts                 # CSRF + attaches the user's token to server-function calls
-server.ts                    # Bun production server: static assets, SSR, /healthz, headers
-supabase/migrations/         # Database schema (applied to the SiteFormer project)
-scripts/smoke-sandbox.ts     # Live test: naming + real sandbox setup/resume/delete
+│       ├── supabase-admin.server.ts          # Secret-key client (the only writer)
+│       ├── errors.server.ts    # AppError + safely(): only safe messages reach the browser
+│       ├── rate-limit.ts       # Per-user sliding-window limits
+│       ├── storage.server.ts   # Storage listing/deletion (files don't cascade)
+│       ├── maintenance.server.ts  # Periodic cleanup of orphaned sandboxes/files/uploads
+│       ├── billing/            # Plans + credits (charge_tokens / grant_credits)
+│       ├── agent/              # Runner (queue, leases, recovery), tools, persistence, memory,
+│       │                       # middleware (vision, credits, logging), uploads, screenshots
+│       ├── sandbox/            # agent37.server.ts (API client), provision.server.ts (setup)
+│       └── ai/                 # naming.server.ts (project names)
+├── config/                     # env.ts (validated public env), site.ts (name, meta)
+├── styles/globals.css          # Tailwind v4 theme tokens + sculpted utilities
+├── router.tsx                  # Router factory
+└── start.ts                    # CSRF + attaches the user's token to server-function calls
+server.ts                       # Bun production server: static assets, SSR, /healthz, security
+                                # headers, 12 MB body cap, recovery + maintenance timers
+supabase/migrations/            # Database schema (applied to the SiteFormer project)
+tests/unit/                     # bun test (also run by `bun run check` and CI)
+scripts/smoke-sandbox.ts        # Live test: naming + real sandbox setup/resume/delete
 ```
 
 **Conventions**
@@ -146,7 +148,11 @@ scripts/smoke-sandbox.ts     # Live test: naming + real sandbox setup/resume/del
   sandbox or fake its status.
 - The session lives in the browser (localStorage). `/` is server-rendered with a short
   "checking session" state; pages under `_authenticated/` render on the client only.
-- Import across folders with the `~/` alias (`~/components/ui/button`).
+- Import across folders with the `~/` alias (`~/components/ui/button`). Other features are
+  imported through their `index.ts`; the server may import a feature's pure `lib/` module
+  (credit math, upload references) but never its components.
+- Plan limits are enforced in the database too (project-limit trigger, credit functions), so a
+  race between two requests can't get around them.
 
 ## Develop
 
@@ -208,8 +214,9 @@ account is deleted in Supabase) and uploads that were attached but never sent wi
      `AGENT37_TEMPLATE`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (inlined into
      the browser bundle at **build** time, so redeploy after changing them). `PORT` is set by
      Railway automatically.
-   - Run **one replica**: background setup jobs are tracked in-process (an interrupted job resumes
-     when its project page is opened).
+   - Run **one replica**: live agent streams, setup jobs and rate limits are in-process (runs
+     survive restarts through leases + recovery; an interrupted setup resumes when its project
+     page is opened).
 3. Generate a domain under Settings → Networking.
 4. In Supabase → Authentication → URL Configuration, set **Site URL** to the Railway domain and
    add `https://<your-domain>/**` (plus `http://localhost:3000/**`) to **Redirect URLs**.

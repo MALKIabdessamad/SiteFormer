@@ -41,14 +41,8 @@ export const CREDIT_PACKS = [
   { id: 'pack_500', credits: 500, priceCents: 2000 },
   { id: 'pack_2000', credits: 2000, priceCents: 6000 },
 ] as const
-export type CreditPackId = (typeof CREDIT_PACKS)[number]['id']
 
 export function formatPrice(cents: number): string {
   if (cents === 0) return 'Free'
   return `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`
-}
-
-export function creditsLabel(credits: number): string {
-  const n = Math.max(0, Math.floor(credits))
-  return `${n.toLocaleString('en-US')} ${n === 1 ? 'credit' : 'credits'}`
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { reportClientError } from '~/lib/report-error'
 import { getSupabase } from '~/lib/supabase/client'
 
 export type AgentRun = {
@@ -19,7 +20,7 @@ const COLUMNS =
 /** Polling interval while a run is active (Realtime usually updates sooner). */
 const ACTIVE_POLL_MS = 4000
 
-export const isActiveRun = (run: AgentRun | undefined) =>
+const isActiveRun = (run: AgentRun | undefined) =>
   run?.status === 'queued' || run?.status === 'running'
 
 /**
@@ -47,7 +48,11 @@ export function useAgentRuns(projectId: string) {
         .order('created_at', { ascending: true })
         .limit(500)
         .then(({ data, error }) => {
-          if (error) console.error('[agent] runs', error.message)
+          if (error)
+            reportClientError('agent-runs', 'Could not load runs', {
+              projectId,
+              detail: error.message,
+            })
           else setRuns((data ?? []) as Array<AgentRun>)
         }),
     [projectId],

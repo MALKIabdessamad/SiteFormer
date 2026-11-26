@@ -85,6 +85,7 @@ async function request(
       }
     }
     if (response && (!retryOn.has(response.status) || attempt >= retries)) return response
+    await response?.body?.cancel().catch(() => undefined) // free the connection before retrying
     if (signal?.aborted) throw new SandboxError('Cancelled.')
     await sleep(Math.min(1000 * 2 ** attempt, 8000))
   }

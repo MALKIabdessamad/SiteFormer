@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { reportClientError } from '~/lib/report-error'
+import { toErrorMessage } from '~/lib/utils/errors'
 import { fetchProject, fetchProjects, subscribeToProjects } from '../api/projects.queries'
 import type { Project, ProjectSummary } from '../types'
 
@@ -11,7 +13,11 @@ export function useProjects() {
     () =>
       fetchProjects()
         .then(setProjects)
-        .catch((error: unknown) => console.error('[projects] could not load', error))
+        .catch((error: unknown) =>
+          reportClientError('projects', 'Could not load projects', {
+            detail: toErrorMessage(error),
+          }),
+        )
         .finally(() => setLoading(false)),
     [],
   )
@@ -44,7 +50,10 @@ export function useProject(projectId: string) {
           setState(project ? { status: 'loaded', project } : { status: 'missing', project: null }),
         )
         .catch((error: unknown) => {
-          console.error('[project] could not load', error)
+          reportClientError('project', 'Could not load the project', {
+            projectId,
+            detail: toErrorMessage(error),
+          })
           // Keep showing the last good state on a transient error.
           setState((prev) => (prev.status === 'loaded' ? prev : { status: 'error', project: null }))
         }),

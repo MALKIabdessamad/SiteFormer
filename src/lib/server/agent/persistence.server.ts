@@ -22,7 +22,7 @@ import { supabaseAdmin } from '../supabase-admin.server'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** App-level run status: TanStack's statuses plus 'queued' (waiting for the sandbox). */
-export type AgentRunStatus = RunStatus | 'queued'
+type AgentRunStatus = RunStatus | 'queued'
 
 export type AgentRunRow = {
   id: string
@@ -52,7 +52,7 @@ const COLUMN_FIELDS = new Set([
   'cancelRequested',
 ])
 
-export function toRunRecord(row: AgentRunRow): RunRecord {
+function toRunRecord(row: AgentRunRow): RunRecord {
   const extras = Object.fromEntries(
     Object.entries(row.record ?? {}).filter(([key]) => !COLUMN_FIELDS.has(key)),
   )

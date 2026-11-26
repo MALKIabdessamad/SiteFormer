@@ -103,6 +103,16 @@ export function mediaTools(session: SandboxSession) {
     const { error } = await supabaseAdmin()
       .storage.from(SCREENSHOT_BUCKET)
       .upload(storagePath, bytes, { contentType: type.mime, upsert: false })
+    if (error) {
+      // The image is in the project either way; only the chat thumbnail is missing.
+      log.warn('Storing the generated image for the chat failed', {
+        event: 'image.store_failed',
+        runId: session.runId,
+        projectId: session.projectId,
+        mime: type.mime,
+        error: error.message,
+      })
+    }
     const cost = (result.usage as { cost?: number } | undefined)?.cost
     await chargeTokens(session.runId, IMAGE_TOKENS)
     log.info('Image generated', {

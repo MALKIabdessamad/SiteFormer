@@ -2,6 +2,7 @@
  * Everything the agent's tools need to act inside ONE project's sandbox, safely and cheaply:
  * path confinement, shell execution with in-sandbox timeouts, and output caps (tokens!).
  */
+import { serverEnv } from '../env.server'
 import { exec, SandboxError, shellQuote, type ExecResult } from '../sandbox/agent37.server'
 import { SITE_DIR } from '../sandbox/provision.server'
 
@@ -39,15 +40,22 @@ export type SandboxSession = {
   readPaths: Set<string>
 }
 
-/** Creates a session with fresh per-run bookkeeping. */
-export function createSession(
-  base: Pick<
-    SandboxSession,
-    'sandboxId' | 'projectId' | 'userId' | 'runId' | 'signal' | 'previewPort'
-  >,
+/**
+ * A session on a project's sandbox with fresh per-run bookkeeping. `runId` labels logs and
+ * screenshot folders; `signal` cancels its commands (the user pressed Stop).
+ */
+export function projectSession(
+  project: { id: string; user_id: string; sandbox_id: string },
+  runId: string,
+  signal: AbortSignal = new AbortController().signal,
 ): SandboxSession {
   return {
-    ...base,
+    sandboxId: project.sandbox_id,
+    projectId: project.id,
+    userId: project.user_id,
+    runId,
+    signal,
+    previewPort: serverEnv().STARTER_PORT,
     pendingImages: [],
     screenshotCount: 0,
     workspaceVersion: 0,

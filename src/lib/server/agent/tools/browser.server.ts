@@ -291,7 +291,7 @@ const viewportField = z
   .describe('desktop (default) = 1280×800, mobile = 390×844.')
 
 /** view_image calls per run (each re-sends an image to the model). */
-export const MAX_IMAGE_VIEWS_PER_RUN = 4
+const MAX_IMAGE_VIEWS_PER_RUN = 4
 
 /** Hosts a reference screenshot must never reach (the sandbox itself, private networks). */
 function isPrivateHost(host: string): boolean {
@@ -358,7 +358,7 @@ export async function optimizeImage(
 }
 
 /** Screenshots per run (screenshot + interact). Each costs ~4 s plus image tokens. */
-export const MAX_SCREENSHOTS_PER_RUN = 2
+const MAX_SCREENSHOTS_PER_RUN = 2
 
 /** Why a screenshot should NOT be taken right now (or null when it should). */
 function screenshotRefusal(session: SandboxSession, key: string): string | null {

@@ -5,22 +5,17 @@
  */
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
-import { restoreCheckpoint } from '~/lib/server/agent/checkpoints.server'
-import { getRunRow } from '~/lib/server/agent/persistence.server'
 import { removeProjectScreenshots } from '~/lib/server/agent/screenshots.server'
 import { removeProjectUploads, resolveUploads } from '~/lib/server/agent/uploads.server'
 import {
-  appendAssistantNote,
   enqueueRun,
   hasActiveRun,
   newRunId,
   recoverRuns,
   stopProjectRuns,
 } from '~/lib/server/agent/runner.server'
-import { createSession } from '~/lib/server/agent/sandbox-session.server'
 import { generateProjectName } from '~/lib/server/ai/naming.server'
-import { serverEnv } from '~/lib/server/env.server'
-import { requireCredits } from '~/lib/server/billing/credits.server'
+import { requireCredits, type UserPlan } from '~/lib/server/billing/credits.server'
 import { log } from '~/lib/server/log.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { ownedProject, provisionTarget, saveProject } from '~/lib/server/projects.server'
@@ -53,13 +48,15 @@ const FirstRunInput = validate(
   }),
 )
 
-const RestoreInput = validate(
-  z.object({
-    projectId: z.uuid('Project not found.'),
-    runId: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/, 'Checkpoint not found.'),
-    point: z.enum(['before', 'after']),
-  }),
-)
+function projectLimitError(plan: UserPlan): AppError {
+  const what = `The ${plan.planName} plan includes up to ${plan.maxProjects} projects.`
+  return new AppError(
+    plan.plan === 'max'
+      ? `${what} Delete one to create another.`
+      : `${what} Upgrade your plan or delete a project to create another.`,
+    'limit',
+  )
+}
 
 /** Fire-and-forget: errors are already recorded (project row / run row) by the job itself. */
 const background = (job: Promise<unknown>) => void job.catch(() => undefined)
@@ -83,20 +80,15 @@ export const createProject = createServerFn({ method: 'POST' })
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
       if (countError) throw countError
-      if ((count ?? 0) >= plan.maxProjects) {
-        throw new AppError(
-          plan.plan === 'max'
-            ? `The ${plan.planName} plan includes up to ${plan.maxProjects} projects. Delete one to create another.`
-            : `The ${plan.planName} plan includes up to ${plan.maxProjects} projects. Upgrade your plan or delete a project to create another.`,
-          'limit',
-        )
-      }
+      if ((count ?? 0) >= plan.maxProjects) throw projectLimitError(plan)
 
       const { data: project, error } = await db
         .from('projects')
         .insert({ user_id: userId, name: nameFromPrompt(data.prompt), prompt: data.prompt })
         .select('id, user_id, sandbox_id')
         .single<{ id: string; user_id: string; sandbox_id: string | null }>()
+      // The database enforces the limit too (race-proof, see migration 12).
+      if (error?.message === 'project_limit') throw projectLimitError(plan)
       if (error) throw error
 
       if (!data.deferRun) {
@@ -132,13 +124,20 @@ export const startFirstRun = createServerFn({ method: 'POST' })
         .single<{ prompt: string }>()
       if (error) throw error
       const attachments = await resolveUploads(data.uploadIds, project.id, context.user.id)
-      await enqueueRun({
-        runId: newRunId(),
-        projectId: project.id,
-        userId: context.user.id,
-        prompt: row.prompt,
-        attachments,
-      })
+      try {
+        await enqueueRun({
+          runId: newRunId(),
+          projectId: project.id,
+          userId: context.user.id,
+          prompt: row.prompt,
+          attachments,
+        })
+      } catch (error) {
+        // A parallel call (double click) already started it.
+        if (error instanceof AppError && error.code === 'limit' && (await hasActiveRun(project.id)))
+          return { ok: true }
+        throw error
+      }
       return { ok: true }
     }),
   )
@@ -172,45 +171,6 @@ export const retryProject = createServerFn({ method: 'POST' })
       if (project.status !== 'failed' || isBusy(project.id)) return { ok: true }
       await saveProject(project.id, { status: 'provisioning', error: null })
       background(ensureProvisioned(provisionTarget(project)))
-      return { ok: true }
-    }),
-  )
-
-/**
- * Restores the project to a checkpoint of one of its runs: the state right `before` the run or
- * right `after` it. The restore is itself a new commit, so it can be undone the same way.
- */
-export const restoreProject = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
-  .validator(RestoreInput)
-  .handler(({ data, context }) =>
-    safely('restoreProject', async () => {
-      const project = await ownedProject(context.user.id, data.projectId)
-      const run = await getRunRow(data.runId)
-      if (!run || run.project_id !== project.id)
-        throw new AppError('Checkpoint not found.', 'not_found')
-      const sha = data.point === 'before' ? run.checkpoint_before : run.checkpoint_after
-      if (!sha) throw new AppError('This message has no checkpoint.', 'not_found')
-      if (project.status !== 'ready' || !project.sandbox_id) {
-        throw new AppError('The sandbox is not ready yet.', 'unavailable')
-      }
-      if (await hasActiveRun(project.id)) {
-        throw new AppError('Stop the agent before restoring.', 'limit')
-      }
-      const session = createSession({
-        sandboxId: project.sandbox_id,
-        projectId: project.id,
-        userId: project.user_id,
-        runId: run.id,
-        signal: new AbortController().signal,
-        previewPort: serverEnv().STARTER_PORT,
-      })
-      await restoreCheckpoint(session, sha)
-      const label = run.prompt.replace(/\s+/g, ' ').slice(0, 80)
-      await appendAssistantNote(
-        project.id,
-        `↩︎ Restored the project to the checkpoint ${data.point} “${label}”. Changes made after that point were undone.`,
-      )
       return { ok: true }
     }),
   )

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { reportClientError } from '~/lib/report-error'
 import { getSupabase } from '~/lib/supabase/client'
 import type { PlanId } from '../lib/credits'
 
@@ -40,7 +41,10 @@ export function useAccount() {
             .eq('user_id', userId)
             .maybeSingle<Row>()
             .then(({ data, error }) => {
-              if (error) return console.error('[billing] account', error.message)
+              if (error)
+                return reportClientError('billing', 'Could not load the plan', {
+                  detail: error.message,
+                })
               if (data)
                 setAccount({
                   plan: data.plan,

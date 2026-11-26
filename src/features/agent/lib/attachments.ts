@@ -1,4 +1,5 @@
 import { getSupabase } from '~/lib/supabase/client'
+import { uploadSource } from './upload-ref'
 
 /** What the server returns for a stored upload. */
 export type Upload = {
@@ -11,10 +12,9 @@ export type Upload = {
 }
 
 export const MAX_ATTACHMENTS = 6
-export const MAX_FILE_BYTES = 10 * 1024 * 1024
+const MAX_FILE_BYTES = 10 * 1024 * 1024
 export const ACCEPT =
   'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,.txt,.md,.markdown,.csv,.json'
-export const UPLOAD_SCHEME = 'sf-upload:'
 
 const ALLOWED_EXT = /\.(png|jpe?g|webp|gif|svg|txt|md|markdown|csv|json)$/i
 
@@ -49,7 +49,7 @@ export async function uploadFile(projectId: string, file: File): Promise<Upload>
 export function uploadParts(uploads: Array<Upload>) {
   return uploads.map((upload) => ({
     type: upload.kind,
-    source: { type: 'url' as const, value: `${UPLOAD_SCHEME}${upload.id}`, mimeType: upload.mime },
+    source: uploadSource(upload.id, upload.mime),
     metadata: { name: upload.name },
   }))
 }

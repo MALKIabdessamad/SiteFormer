@@ -17,9 +17,11 @@ import { authenticate } from '../auth.server'
 import { ConfigError } from '../env.server'
 import { runMaintenance } from '../maintenance.server'
 import { ownedProject } from '../projects.server'
+import { rateLimiter } from '../rate-limit'
 import { getRunRow, persistence } from './persistence.server'
 import { cancelRun, enqueueRun, isValidRunId, recoverRuns } from './runner.server'
-import { resolveUploads, saveUpload, UPLOAD_SCHEME } from './uploads.server'
+import { uploadIdOf } from '~/features/agent/lib/upload-ref'
+import { resolveUploads, saveUpload } from './uploads.server'
 
 const MAX_PROMPT = 8000
 /** A from-start join waits this long for a run's first chunk (queued runs write one at once). */
@@ -78,13 +80,9 @@ function lastUserMessage(messages: Array<UIMessage | ModelMessage>): {
               : ''
         continue
       }
-      const source = part.source as { type?: string; value?: string } | undefined
-      if (
-        source?.type === 'url' &&
-        typeof source.value === 'string' &&
-        source.value.startsWith(UPLOAD_SCHEME)
-      ) {
-        uploadIds.push(source.value.slice(UPLOAD_SCHEME.length))
+      const uploadId = uploadIdOf(part)
+      if (uploadId) {
+        uploadIds.push(uploadId)
       } else if (
         part.type === 'image' ||
         part.type === 'document' ||
@@ -152,8 +150,14 @@ export async function getAgent(request: Request): Promise<Response> {
   }
   const threadId = url.searchParams.get('threadId') ?? ''
   const project = await ownedProject(user.id, threadId)
-  // Self-healing: resume this project's runs if a restart orphaned them.
-  await recoverRuns(project.id)
+  // Self-healing: resume this project's runs if a restart orphaned them (never blocks hydration).
+  void recoverRuns(project.id).catch((error: unknown) =>
+    log.warn('Run recovery on open failed', {
+      event: 'agent.recover_failed',
+      projectId: project.id,
+      ...errorFields(error),
+    }),
+  )
   return reconstructChat(persistence, request, { authorize: async () => true })
 }
 
@@ -186,17 +190,12 @@ export async function postMaintenance(request: Request): Promise<Response> {
   return Response.json(await runMaintenance())
 }
 
-const uploadHits = new Map<string, Array<number>>()
+const allowUpload = rateLimiter(40)
 
 /** POST /api/uploads  (multipart: projectId, file) → the stored upload (one file per request). */
 export async function postUpload(request: Request): Promise<Response> {
   const user = await authenticate(request.headers.get('authorization') ?? undefined)
-  const now = Date.now()
-  const hits = (uploadHits.get(user.id) ?? []).filter((t) => now - t < 60_000)
-  if (hits.length >= 40) throw new AppError('Too many uploads. Wait a minute.', 'limit')
-  hits.push(now)
-  uploadHits.set(user.id, hits)
-  if (uploadHits.size > 5000) uploadHits.clear()
+  if (!allowUpload(user.id)) throw new AppError('Too many uploads. Wait a minute.', 'limit')
 
   const length = Number(request.headers.get('content-length') ?? 0)
   if (length > 11 * 1024 * 1024) throw new AppError('Files can be up to 10 MB.')

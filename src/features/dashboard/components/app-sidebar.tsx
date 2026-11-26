@@ -3,8 +3,8 @@ import { Link } from '@tanstack/react-router'
 import { Coins, Globe, LayoutTemplate, LogOut, PanelLeft, Plus, Search, X } from 'lucide-react'
 import { Logo, LogoMark } from '~/components/brand/logo'
 import { cn } from '~/lib/utils/cn'
-import { useAccount } from '~/features/billing/hooks/use-account'
-import type { ProjectSummary } from '~/features/projects/types'
+import { useAccount } from '~/features/billing'
+import type { ProjectSummary } from '~/features/projects'
 
 const itemClass =
   'flex h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink lg:h-10'

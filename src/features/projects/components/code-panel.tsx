@@ -67,16 +67,21 @@ export function CodePanel({
   )
   const dirty = loaded?.kind === 'text' && draft !== null && draft !== loaded.content
 
+  const selectedRef = useRef(selected)
+  useEffect(() => {
+    selectedRef.current = selected
+  }, [selected])
+
   const applyList = useCallback((result: { files: Array<string>; truncated: boolean }) => {
     setListError('')
     setFiles(result.files)
     setTruncated(result.truncated)
-    setSelected((now) => {
-      if (now && result.files.includes(now)) return now
-      const first = defaultFile(result.files)
-      setOpen((set) => new Set([...set, ...foldersOf(first)]))
-      return first
-    })
+    // Keep the open file if it still exists; otherwise open the home page and reveal it.
+    const current = selectedRef.current
+    if (current && result.files.includes(current)) return
+    const first = defaultFile(result.files)
+    setSelected(first)
+    setOpen((set) => new Set([...set, ...foldersOf(first)]))
   }, [])
   const listFailed = useCallback((err: unknown) => setListError(toErrorMessage(err)), [])
   const loadList = useCallback(

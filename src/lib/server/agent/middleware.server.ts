@@ -1,4 +1,5 @@
 import type { ChatMiddleware, ContentPart, ModelMessage } from '@tanstack/ai'
+import { uploadIdOf } from '~/features/agent/lib/upload-ref'
 import { billableTokens, type Usage } from '~/features/billing/lib/credits'
 import { chargeTokens } from '../billing/credits.server'
 import { errorFields, log } from '../log.server'
@@ -146,16 +147,9 @@ function safeParse(json: string): unknown {
   }
 }
 
-const UPLOAD_SCHEME = 'sf-upload:'
-
-/** "sf-upload:<id>" of an image/document part, or null. */
-function uploadId(part: ContentPart): string | null {
-  if (part.type !== 'image' && part.type !== 'document') return null
-  const source = (part as { source?: { type?: string; value?: string } }).source
-  return source?.type === 'url' && source.value?.startsWith(UPLOAD_SCHEME)
-    ? source.value.slice(UPLOAD_SCHEME.length)
-    : null
-}
+/** The upload an image/document part references, or null. */
+const uploadId = (part: ContentPart): string | null =>
+  part.type === 'image' || part.type === 'document' ? uploadIdOf(part) : null
 
 /** Replaces attachment references with text the model can use (never sends "sf-upload:" URLs). */
 export function stripAttachments(

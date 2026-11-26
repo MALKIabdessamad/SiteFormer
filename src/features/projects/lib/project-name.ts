@@ -3,8 +3,8 @@
  * cleaned before it is stored: plain text, short, never empty.
  */
 
-export const MAX_NAME_LENGTH = 48
-export const FALLBACK_NAME = 'New site'
+const MAX_NAME_LENGTH = 48
+const FALLBACK_NAME = 'New site'
 
 function sanitize(raw: string): string {
   return raw

@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import {
   billableTokens,
   CACHED_TOKEN_WEIGHT,
-  creditsLabel,
   formatPrice,
 } from '../../src/features/billing/lib/credits'
 
@@ -24,10 +23,8 @@ describe('billableTokens', () => {
   })
 })
 
-test('labels', () => {
+test('prices', () => {
   expect(formatPrice(0)).toBe('Free')
   expect(formatPrice(2000)).toBe('$20')
   expect(formatPrice(1999)).toBe('$19.99')
-  expect(creditsLabel(1)).toBe('1 credit')
-  expect(creditsLabel(1500)).toBe('1,500 credits')
 })

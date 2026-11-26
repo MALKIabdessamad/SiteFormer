@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { History, Loader2, RotateCcw } from 'lucide-react'
 import { toErrorMessage } from '~/lib/utils/errors'
-import { restoreProject } from '~/features/projects/api/projects.functions'
+import { restoreToCheckpoint } from '../api/checkpoints.functions'
 import type { AgentRun } from '../hooks/use-agent-runs'
 
 type CheckpointCardProps = {
@@ -40,7 +40,7 @@ export function CheckpointCard({
     setBusy(true)
     setError('')
     try {
-      await restoreProject({ data: { projectId, runId: run.id, point } })
+      await restoreToCheckpoint({ data: { projectId, runId: run.id, point } })
       setConfirm(null)
       onRestored()
     } catch (err) {

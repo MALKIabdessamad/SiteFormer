@@ -1,5 +1,6 @@
 import type { UIMessage } from '@tanstack/ai-react'
 import type { ToolStepData } from '../components/tool-step'
+import { uploadIdOf } from './upload-ref'
 
 /** A rendered chunk of an assistant message, in order. */
 export type Segment =
@@ -30,15 +31,11 @@ function parseJson(value: unknown): Record<string, unknown> | null {
   }
 }
 
-const UPLOAD = 'sf-upload:'
-
 /** Upload ids referenced by a message's image/document parts. */
 const attachmentsOf = (message: UIMessage): Array<string> =>
   message.parts.flatMap((part) => {
-    const source = (part as { source?: { type?: string; value?: string } }).source
-    return source?.type === 'url' && source.value?.startsWith(UPLOAD)
-      ? [source.value.slice(UPLOAD.length)]
-      : []
+    const id = uploadIdOf(part)
+    return id ? [id] : []
   })
 
 const textOf = (message: UIMessage) =>

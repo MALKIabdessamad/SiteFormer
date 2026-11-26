@@ -1,11 +1,10 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { ArrowUp, Loader2 } from 'lucide-react'
+import { AttachButton, AttachmentChips, type Attachment } from '~/features/agent'
 import {
   PROMPT_MAX_LENGTH as MAX_LENGTH,
   PROMPT_MIN_LENGTH as MIN_LENGTH,
-} from '~/features/projects/lib/constants'
-import { AttachButton, AttachmentChips } from '~/features/agent/components/attachments'
-import type { Attachment } from '~/features/agent/hooks/use-attachments'
+} from '~/features/projects'
 import { storage } from '~/lib/utils/storage'
 
 export type PromptBoxHandle = {

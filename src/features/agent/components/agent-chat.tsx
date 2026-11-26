@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent }
 import { ArrowUp, ChevronRight, Coins, History, Loader2, PencilLine, Square } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
-import type { Project } from '~/features/projects/types'
+import type { Project } from '~/features/projects'
 import { useAgentChat } from '../hooks/use-agent-chat'
 import { useAttachments } from '../hooks/use-attachments'
 import { uploadParts } from '../lib/attachments'

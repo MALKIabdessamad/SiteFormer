@@ -29,10 +29,11 @@ import {
 import { memoryMiddleware } from '@tanstack/ai-memory'
 import { createOpenRouterText } from '@tanstack/ai-openrouter'
 import { isTerminalRunStatus, withPersistence } from '@tanstack/ai-persistence'
+import { uploadSource } from '~/features/agent/lib/upload-ref'
 import { AppError } from '../app-error'
 import { errorFields, log as logger, preview } from '../log.server'
 import { serverEnv } from '../env.server'
-import { getProject, provisionTarget, type ProjectRow } from '../projects.server'
+import { getProject, provisionTarget } from '../projects.server'
 import { ensureProvisioned, isBusy } from '../sandbox/provision.server'
 import { supabaseAdmin } from '../supabase-admin.server'
 import { requireCredits } from '../billing/credits.server'
@@ -53,12 +54,11 @@ import {
   copyUploadsIntoProject,
   downloadUpload,
   projectUploads,
-  UPLOAD_SCHEME,
   type UploadRow,
 } from './uploads.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
 import { runContext, SYSTEM_PROMPT } from './prompt.server'
-import { createSession, type SandboxSession } from './sandbox-session.server'
+import { projectSession, type SandboxSession } from './sandbox-session.server'
 import { agentTools } from './tools/index.server'
 import { restartDevServer } from './tools/shell.server'
 
@@ -144,7 +144,7 @@ async function appendUserMessage(projectId: string, prompt: string, attachments:
           (a) =>
             ({
               type: a.kind,
-              source: { type: 'url', value: `${UPLOAD_SCHEME}${a.id}`, mimeType: a.mime },
+              source: uploadSource(a.id, a.mime),
               metadata: { name: a.name },
             }) as ContentPart,
         ),
@@ -279,17 +279,6 @@ async function repairInterruptedTranscript(projectId: string) {
   }
 }
 
-function sessionFor(row: AgentRunRow, project: ProjectRow, signal: AbortSignal): SandboxSession {
-  return createSession({
-    sandboxId: project.sandbox_id!,
-    projectId: project.id,
-    userId: row.user_id,
-    runId: row.id,
-    signal,
-    previewPort: serverEnv().STARTER_PORT,
-  })
-}
-
 function agentStream(
   row: AgentRunRow,
   session: SandboxSession,
@@ -351,7 +340,7 @@ function agentStream(
 
 /**
  * Copies this run's attachments into the project and loads the project's upload index (used to
- * describe "sf-upload:" references) plus this run's images (shown to the model once).
+ * describe "sf-upload:" references) plus this run's images (shown to the model during the run).
  */
 async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
   let uploads = await projectUploads(row.project_id)
@@ -388,7 +377,10 @@ async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
   )
 }
 
-/** Compaction summaries are text-only: attachment references become plain notes first. */
+/**
+ * Compaction summaries are text-only: attachment references become plain notes first. (These
+ * rare summary calls are not charged as credits.)
+ */
 function summarizeWithoutMedia(
   adapter: Parameters<typeof conversationSummarizer>[0]['adapter'],
 ): Summarizer {
@@ -426,7 +418,17 @@ function drive(runId: string, { resumed = false } = {}): Promise<void> {
       clearInterval(renew)
       await releaseLease(runId).catch(() => undefined)
     }
-  })().finally(() => active.delete(runId))
+  })()
+    // Callers fire and forget: a failure here (e.g. the database is briefly unreachable) must be
+    // logged, never become an unhandled rejection. The run is retried by recovery.
+    .catch((error: unknown) =>
+      logger.error('Driving agent run failed', {
+        event: 'agent.drive_failed',
+        runId,
+        ...errorFields(error),
+      }),
+    )
+    .finally(() => active.delete(runId))
   active.set(runId, { controller, done })
   return done
 }
@@ -445,7 +447,11 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
   const projectId = row.project_id
   try {
     const project = await waitForSandbox(row, log, controller.signal)
-    session = sessionFor(row, project, controller.signal)
+    session = projectSession(
+      { ...project, sandbox_id: project.sandbox_id! },
+      row.id,
+      controller.signal,
+    )
     runLog.info(resumed ? 'Agent run resumed after restart' : 'Agent run started', {
       event: resumed ? 'agent.resumed' : 'agent.started',
       sandboxId: project.sandbox_id,

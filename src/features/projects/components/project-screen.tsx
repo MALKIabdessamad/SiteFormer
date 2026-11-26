@@ -5,6 +5,7 @@ import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
 import { isSettledRun, useAgentRuns } from '~/features/agent'
 import { useRedirectOnSignOut } from '~/features/auth'
+import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
 import { deleteProject, openProject, retryProject } from '../api/projects.functions'
@@ -55,7 +56,10 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   // Opening the page resumes an interrupted setup, or wakes a sleeping sandbox.
   useEffect(() => {
     openProject({ data: { projectId } }).catch((err: unknown) =>
-      console.warn('[project] open failed:', toErrorMessage(err)),
+      reportClientError('project', 'Opening the project failed', {
+        projectId,
+        detail: toErrorMessage(err),
+      }),
     )
   }, [projectId])
 
