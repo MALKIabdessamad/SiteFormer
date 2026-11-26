@@ -1,7 +1,7 @@
 /**
  * Git checkpoints in the project sandbox. Every agent run is bracketed by commits, so each reply
- * can offer "Restore to here". Restoring never rewrites history: it commits the old tree as a
- * new commit, so a restore can itself be undone.
+ * can offer "Revert to this version". Restoring never rewrites history: it commits the old tree
+ * as a new commit, so a restore can itself be undone.
  */
 import { capText, sh, shellQuote, type SandboxSession } from './sandbox-session.server'
 import { restartDevServer } from './tools/shell.server'

@@ -59,8 +59,8 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   screenshots, research), make no checkpoints and don't copy attachments into the project;
   the server enforces it, not just the UI.
 - **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
-  checkpoint card: _Undo these changes_ / _Restore to here_. A restore is a new commit (undoable)
-  and adds a note to the transcript so the model knows.
+  row of icons: _Revert to this version_ / _Undo latest edit_, plus the credits it used. A restore
+  is a new commit (undoable) and adds a note to the transcript so the model knows.
 - **Tools:** `update_plan`, `list_files`, `read_file`, `search_code`, `write_file`, `edit_file`
   (exact, with safe fallbacks for quote/escape/indent slips), `delete_path`, `move_path`,
   `run_command`, `restart_dev_server`, `read_dev_logs`, `check_project` (types + preview + dev

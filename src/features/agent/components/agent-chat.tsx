@@ -10,9 +10,9 @@ import { uploadParts } from '../lib/attachments'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns, type Segment } from '../lib/turns'
-import { CheckpointCard } from './checkpoint-card'
 import { Markdown } from './markdown'
 import { isModeShortcut, ModeMenu, nextMode } from './mode-menu'
+import { ReplyActions } from './reply-actions'
 import { PlanCard, ToolStep } from './tool-step'
 
 const MAX_MESSAGE = 8000
@@ -199,10 +199,11 @@ export function AgentChat({
                 )}
               </div>
               {finished && run && (
-                <CheckpointCard
+                <ReplyActions
                   projectId={project.id}
                   run={run}
                   latest={run.id === latestRunId}
+                  changedSince={turn.notes.some((note) => !note.startsWith('⚠'))}
                   locked={busy}
                   onRestored={onRestored}
                 />
