@@ -11,7 +11,7 @@ import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns, type Segment } from '../lib/turns'
 import { CheckpointCard } from './checkpoint-card'
 import { Markdown } from './markdown'
-import { ToolStep } from './tool-step'
+import { PlanCard, ToolStep } from './tool-step'
 
 const MAX_MESSAGE = 8000
 
@@ -142,6 +142,14 @@ export function AgentChat({
               ? runs[turns.slice(0, index).filter((t) => t.user !== null).length]
               : undefined
           const finished = isSettledRun(run)
+          // The reply is over when its run settled, or (last turn) when the agent isn't busy.
+          const settled = finished || index < turns.length - 1 || !busy
+          const completed = settled && run?.status !== 'failed' && run?.status !== 'aborted'
+          const plans = turn.segments.filter(
+            (s): s is Extract<Segment, { kind: 'tool' }> =>
+              s.kind === 'tool' && s.step.name === 'update_plan',
+          )
+          const latestPlan = plans.at(-1)?.step.input.steps
           return (
             <li key={turn.key} className="space-y-2">
               {turn.attachments.length > 0 && <MessageAttachments ids={turn.attachments} />}
@@ -160,9 +168,14 @@ export function AgentChat({
                     <Markdown key={group.key} text={group.segment.text} />
                   ) : group.segment.kind === 'thinking' ? (
                     <Thinking key={group.key} text={group.segment.text} />
-                  ) : (
-                    <ToolStep key={group.key} step={group.segment.step} />
-                  ),
+                  ) : group.segment.key === plans[0]?.key ? (
+                    <PlanCard
+                      key={group.key}
+                      steps={latestPlan}
+                      settled={settled}
+                      completed={completed}
+                    />
+                  ) : null,
                 )}
               </div>
               {finished && run && (

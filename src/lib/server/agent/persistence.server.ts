@@ -34,6 +34,8 @@ export type AgentRunRow = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
+  lease_owner: string | null
+  lease_until: string | null
   record: Partial<RunRecord>
   created_at: string
   started_at: string | null

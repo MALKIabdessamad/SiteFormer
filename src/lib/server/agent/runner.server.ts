@@ -72,6 +72,57 @@ type ActiveRun = { controller: AbortController; done: Promise<void> }
 /** Runs driven by this process, by run id. */
 const active = new Map<string, ActiveRun>()
 
+/**
+ * Run leases (see migration 20261126000010): this process holds a renewed lease on each run it
+ * drives; another process only takes a run over once its lease expired.
+ */
+const WORKER = `${process.env.RAILWAY_REPLICA_ID ?? 'local'}:${crypto.randomUUID()}`
+const LEASE_MS = 40_000
+const RENEW_MS = 10_000
+const leaseUntil = () => new Date(Date.now() + LEASE_MS).toISOString()
+
+/** Atomically takes (or keeps) the lease on a run. False if another live process holds it. */
+async function claimLease(runId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin()
+    .from('agent_runs')
+    .update({ lease_owner: WORKER, lease_until: leaseUntil() })
+    .eq('id', runId)
+    .in('status', ['queued', 'running'])
+    .or(`lease_owner.eq.${WORKER},lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
+    .select('id')
+  if (error) throw error
+  return (data ?? []).length > 0
+}
+
+/**
+ * Renews the lease. Returns whether it is still held and whether a stop was requested (Stop
+ * pressed on a request that another process served).
+ */
+async function renewLease(runId: string): Promise<{ held: boolean; cancel: boolean }> {
+  const { data, error } = await supabaseAdmin()
+    .from('agent_runs')
+    .update({ lease_until: leaseUntil() })
+    .eq('id', runId)
+    .eq('lease_owner', WORKER)
+    .select('cancel_requested')
+    .returns<Array<{ cancel_requested: boolean | null }>>()
+  if (error) return { held: true, cancel: false } // a transient error is not a lost lease
+  return { held: (data ?? []).length > 0, cancel: data?.[0]?.cancel_requested === true }
+}
+
+async function releaseLease(runId: string) {
+  await supabaseAdmin()
+    .from('agent_runs')
+    .update({ lease_owner: null, lease_until: null })
+    .eq('id', runId)
+    .eq('lease_owner', WORKER)
+}
+
+// On shutdown (deploy), hand runs over at once instead of waiting for leases to expire.
+process.once('SIGTERM', () => {
+  for (const runId of active.keys()) void releaseLease(runId)
+})
+
 const now = () => Date.now()
 const custom = (name: string, value: Record<string, unknown>): StreamChunk =>
   ({ type: 'CUSTOM', name, value, timestamp: now() }) as StreamChunk
@@ -131,6 +182,9 @@ export async function enqueueRun(input: {
     user_id: userId,
     prompt,
     status: 'queued',
+    // Claimed at birth: no other process may recover it while this one starts driving it.
+    lease_owner: WORKER,
+    lease_until: leaseUntil(),
   })
   if (error) {
     if (error.code === '23505') {
@@ -350,7 +404,24 @@ function drive(runId: string, { resumed = false } = {}): Promise<void> {
   const existing = active.get(runId)
   if (existing) return existing.done
   const controller = new AbortController()
-  const done = driveInner(runId, controller, resumed).finally(() => active.delete(runId))
+  const done = (async () => {
+    if (!(await claimLease(runId))) return // another live process is driving it
+    const renew = setInterval(() => {
+      void renewLease(runId).then(({ held, cancel }) => {
+        if (cancel) controller.abort()
+        if (held) return
+        // Only after this process stalled for longer than the lease. Not aborted here: an abort
+        // would mark the run stopped while the other process is finishing it.
+        logger.warn('Agent run lease lost', { event: 'agent.lease_lost', runId })
+      })
+    }, RENEW_MS)
+    try {
+      await driveInner(runId, controller, resumed)
+    } finally {
+      clearInterval(renew)
+      await releaseLease(runId).catch(() => undefined)
+    }
+  })().finally(() => active.delete(runId))
   active.set(runId, { controller, done })
   return done
 }
@@ -475,7 +546,9 @@ export async function cancelRun(runId: string, userId: string): Promise<void> {
     run.controller.abort()
     return
   }
-  // Not driven by this process (e.g. right after a restart): finish it here.
+  // Driven by another live process: it sees the request within seconds (lease renewal).
+  if (row.lease_until && Date.parse(row.lease_until) > Date.now()) return
+  // Not driven by anyone (e.g. right after a restart): finish it here.
   await updateRun(runId, {
     status: 'aborted',
     cancel_requested: true,
@@ -488,10 +561,12 @@ export async function cancelRun(runId: string, userId: string): Promise<void> {
  * and whenever a project is opened (self-healing).
  */
 export async function recoverRuns(projectId?: string): Promise<number> {
+  // Only runs nobody holds: their process died (or never claimed them).
   let query = supabaseAdmin()
     .from('agent_runs')
     .select('id, status')
     .in('status', ['queued', 'running'])
+    .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
   if (projectId) query = query.eq('project_id', projectId)
   const { data, error } = await query.returns<Array<{ id: string; status: string }>>()
   if (error) throw error

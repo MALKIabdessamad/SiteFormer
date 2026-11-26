@@ -120,68 +120,58 @@ export function fileTools(session: SandboxSession) {
     return { path: relativePath(absolute), lines: lineCount(content) }
   })
 
+  // Flat string arguments on purpose: some models drop quotes and newlines in strings nested
+  // inside arrays of objects (an `edits: [...]` list arrived as `from ../x;|import …`), while
+  // top-level strings (like run_command's command) come through intact. One edit per call;
+  // call it several times (in parallel) for several edits.
   const editFile = toolDefinition({
     name: 'edit_file',
     description:
-      'Edit a file by find/replace. read_file the lines first (in this run), then copy oldText ' +
-      'character for character from the text after "│" (same quotes, e.g. className="…"). It ' +
-      'must match exactly once (include surrounding lines to be unique) unless replaceAll is ' +
-      'true. Edits apply in order; edits that match are saved even if another one fails (the ' +
-      'result lists failures to retry).',
+      'Replace one exact piece of a file. read_file the lines first (in this run), then copy ' +
+      'oldText character for character from the text after "│" (same quotes and line breaks). ' +
+      'It must match exactly once (include a surrounding line to be unique) unless replaceAll ' +
+      'is true. For several changes, call edit_file several times. Never edit files with ' +
+      'scripts in run_command.',
     inputSchema: z.object({
       path: z.string(),
-      edits: z
-        .array(
-          z.object({
-            oldText: z.string().min(1),
-            newText: z.string(),
-            replaceAll: z.boolean().optional(),
-          }),
-        )
-        .min(1)
-        .max(30),
+      oldText: z.string().min(1).describe('Exact current text, copied from read_file.'),
+      newText: z.string().describe('The replacement text.'),
+      replaceAll: z.boolean().optional().describe('Replace every occurrence.'),
     }),
-  }).server(async ({ path, edits }) => {
+  }).server(async ({ path, oldText, newText: rawNewText, replaceAll = false }) => {
     const absolute = sitePath(path)
     const where = relativePath(absolute)
-    let text = await readText(session, absolute)
+    const text = await readText(session, absolute)
     // Leftover JSON escaping in newText (\" instead of "): undo it, unless the file itself
     // uses \" somewhere (then it may be intended).
-    const fileHasEscapes = /\\["']/.test(text)
-    const cleanNewText = (s: string) => (fileHasEscapes ? s : s.replace(/\\(["'])/g, '$1'))
-    const fuzzy: Array<string> = []
-    const failed: Array<string> = []
-    for (const [i, edit] of edits.entries()) {
-      const result = findMatches(text, edit.oldText, edit.replaceAll ?? false)
-      if (!result.ok) {
-        failed.push(
-          result.reason === 'ambiguous'
-            ? `Edit ${i + 1}: oldText matches ${result.count} places. Include more surrounding lines, or set replaceAll.`
-            : `Edit ${i + 1}: oldText not found.${result.hint ? ` ${result.hint}` : ''}`,
-        )
-        continue
+    const newText = /\\["']/.test(text) ? rawNewText : rawNewText.replace(/\\(["'])/g, '$1')
+    // The same insertion sent twice (e.g. two identical parallel calls) must not apply twice.
+    if (oldText !== newText && newText.includes(oldText) && text.includes(newText)) {
+      return {
+        path: where,
+        editsApplied: 0,
+        note: 'Already applied: the file already has newText.',
       }
-      const strategy = result.matches[0]!.strategy
-      if (strategy !== 'exact') fuzzy.push(`edit ${i + 1} matched ignoring ${strategy}`)
-      const newText = cleanNewText(edit.newText)
-      if (newText !== edit.newText) fuzzy.push(`edit ${i + 1}: removed stray \\ before quotes`)
-      text = applyMatches(text, result.matches, result.newText?.(newText) ?? newText)
     }
-    const applied = edits.length - failed.length
-    if (applied > 0) await writeText(session, absolute, text)
-    if (failed.length) {
+    const result = findMatches(text, oldText, replaceAll)
+    if (!result.ok) {
       const advice = session.readPaths.has(where)
-        ? `Copy oldText exactly from the text after "│" in read_file (keep the file's quotes).`
-        : `You have not read ${where} in this run: your oldText is probably from an older version. read_file it, then retry the failed edits.`
-      const summary = `${applied ? `${applied} of ${edits.length} edits applied and saved; ` : 'No edits applied; '}failed: ${failed.join(' ')} ${advice}`
-      if (applied === 0) throw new ToolError(summary)
-      return { path: where, editsApplied: applied, error: summary, lines: lineCount(text) }
+        ? 'Copy oldText exactly from the text after "│" in read_file (keep the file\'s quotes and line breaks).'
+        : `You have not read ${where} in this run: your oldText is probably from an older version. read_file it first.`
+      throw new ToolError(
+        result.reason === 'ambiguous'
+          ? `oldText matches ${result.count} places in ${where}. Include a surrounding line, or set replaceAll.`
+          : `oldText not found in ${where}.${result.hint ? ` ${result.hint}` : ''} ${advice}`,
+      )
     }
+    const strategy = result.matches[0]!.strategy
+    const updated = applyMatches(text, result.matches, result.newText?.(newText) ?? newText)
+    await writeText(session, absolute, updated)
     return {
       path: where,
-      editsApplied: applied,
-      lines: lineCount(text),
-      ...(fuzzy.length ? { note: fuzzy.join('; ') } : {}),
+      editsApplied: result.matches.length,
+      lines: lineCount(updated),
+      ...(strategy !== 'exact' ? { note: `matched ignoring ${strategy}` } : {}),
     }
   })
 

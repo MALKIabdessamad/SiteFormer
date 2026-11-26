@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   BookOpen,
   Brain,
@@ -19,11 +19,11 @@ import {
   Loader2,
   MousePointerClick,
   RefreshCw,
+  RotateCcw,
   ScanSearch,
   ShieldCheck,
   SquareTerminal,
   Trash2,
-  XCircle,
 } from 'lucide-react'
 import { cn } from '~/lib/utils/cn'
 import { ScreenshotImage } from './screenshot-image'
@@ -192,8 +192,14 @@ function failed(step: ToolStepData): string | null {
   return null
 }
 
+/** Wording for the user: internal failures are normal agent work (it adjusts and retries). */
+function friendly(error: string): string {
+  if (/server restart/i.test(error)) return 'Interrupted by an update; the agent continued.'
+  return error
+}
+
 export function ToolStep({ step }: { step: ToolStepData }) {
-  if (step.name === 'update_plan') return <PlanCard steps={step.input.steps} />
+  const [showError, setShowError] = useState(false)
   if (step.output?.skipped === true) {
     // The agent asked for something it didn't need (nothing changed / budget used).
     const what: Record<string, string> = {
@@ -229,20 +235,32 @@ export function ToolStep({ step }: { step: ToolStepData }) {
   return (
     <div className="text-xs">
       <div
-        className={cn('flex min-w-0 items-center gap-2 py-0.5', error ? 'text-danger' : 'text-dim')}
+        className={cn('flex min-w-0 items-center gap-2 py-0.5', error ? 'text-faint' : 'text-dim')}
       >
         <span className="shrink-0">
           {step.running ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-signal" aria-label="Working" />
           ) : error ? (
-            <XCircle className="h-3.5 w-3.5" aria-label="Failed" />
+            <RotateCcw className="h-3.5 w-3.5" aria-label="Retried" />
           ) : (
             icon
           )}
         </span>
         <span className="min-w-0 truncate">{label}</span>
+        {error && (
+          <button
+            type="button"
+            onClick={() => setShowError((v) => !v)}
+            aria-expanded={showError}
+            className="shrink-0 rounded-full px-1.5 text-[11px] text-faint hover:bg-ink/[0.06] hover:text-dim"
+          >
+            · retried
+          </button>
+        )}
       </div>
-      {error && <p className="mb-1 ml-5.5 line-clamp-2 text-[11px] text-danger/80">{error}</p>}
+      {error && showError && (
+        <p className="mb-1 ml-5.5 text-[11px] break-words text-faint">{friendly(error)}</p>
+      )}
       {browserSteps.length > 0 && (
         <ul className="mb-1 ml-5.5 space-y-0.5 text-[11px] text-faint">
           {browserSteps.slice(0, 6).map((s, n) => (
@@ -282,9 +300,31 @@ export function ToolStep({ step }: { step: ToolStepData }) {
   )
 }
 
-function PlanCard({ steps }: { steps: unknown }) {
+/**
+ * The agent's plan (latest version; one card per reply). Once the reply has ended nothing spins:
+ * a completed reply shows every step done (the agent doesn't spend a call ticking the last box),
+ * a stopped one leaves unfinished steps open.
+ */
+export function PlanCard({
+  steps,
+  settled,
+  completed,
+}: {
+  steps: unknown
+  settled: boolean
+  completed: boolean
+}) {
   if (!Array.isArray(steps)) return null
-  const list = steps as Array<{ title?: string; status?: string }>
+  const list = (steps as Array<{ title?: string; status?: string }>).map((step) => ({
+    ...step,
+    status: settled
+      ? completed
+        ? 'done'
+        : step.status === 'done'
+          ? 'done'
+          : 'pending'
+      : step.status,
+  }))
   const done = list.filter((s) => s.status === 'done').length
   return (
     <div className="my-1 rounded-xl border bg-ink/[0.03] p-3 text-xs">

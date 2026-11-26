@@ -204,4 +204,18 @@ function maintenance() {
     )
 }
 setTimeout(maintenance, 2 * 60 * 1000).unref()
+
+// Runs whose process died (lease expired) are picked up within half a minute, including runs a
+// previous deploy was still finishing when this process booted.
+setInterval(() => {
+  if (stopping) return
+  void Promise.resolve(
+    app.fetch(
+      new Request(`http://localhost:${PORT}/api/agent?action=recover`, {
+        method: 'POST',
+        headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
+      }),
+    ),
+  ).catch(() => undefined)
+}, 30_000).unref()
 setInterval(maintenance, MAINTENANCE_EVERY_MS).unref()

@@ -358,7 +358,7 @@ export async function optimizeImage(
 }
 
 /** Screenshots per run (screenshot + interact). Each costs ~4 s plus image tokens. */
-export const MAX_SCREENSHOTS_PER_RUN = 4
+export const MAX_SCREENSHOTS_PER_RUN = 2
 
 /** Why a screenshot should NOT be taken right now (or null when it should). */
 function screenshotRefusal(session: SandboxSession, key: string): string | null {
@@ -376,10 +376,11 @@ export function browserTools(session: SandboxSession) {
     name: 'screenshot',
     description:
       'Screenshot a page of the running site in a real browser; you SEE the image on your next ' +
-      'step and the user sees it in the chat. Expensive (~4 s + image tokens): take ONE, after ' +
-      'you finished a visual change, not after each edit. Desktop by default; mobile only for ' +
-      `layout/responsive work. Max ${MAX_SCREENSHOTS_PER_RUN} per run; identical re-shots are ` +
-      'refused. Not for text/copy, logic or config changes (use check_project / inspect_page).',
+      'step and the user sees it in the chat. Expensive (~4 s + image tokens). Usually NOT ' +
+      'needed: you can read the code. Use it only for a brand-new page, a large redesign or a ' +
+      "layout you can't judge from code, or when the user asks; once, after all edits. " +
+      `Desktop by default. Max ${MAX_SCREENSHOTS_PER_RUN} per run; identical re-shots are ` +
+      'refused. Never for text, colors, spacing, links or small components.',
     inputSchema: z.object({
       path: pathField,
       viewport: viewportField,
