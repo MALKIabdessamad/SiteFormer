@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react'
 import {
+  BookOpen,
   Brain,
+  ClipboardCheck,
+  Eye,
+  ImagePlus,
+  Search,
   Camera,
   CheckCircle2,
   Circle,
@@ -106,6 +111,67 @@ function describe(step: ToolStepData): { icon: ReactNode; label: ReactNode } {
       }
       return { icon: icon(Globe), label: <>Read {host}</> }
     }
+    case 'generate_image':
+      return {
+        icon: icon(ImagePlus),
+        label: (
+          <>
+            Generated an image
+            {o.path ? (
+              <>
+                {' '}
+                · <span className="font-mono text-[0.92em]">{str(o.path)}</span>
+              </>
+            ) : null}
+          </>
+        ),
+      }
+    case 'view_image':
+      return { icon: icon(Eye), label: <>Looked at {path}</> }
+    case 'reference_screenshot': {
+      let host = str(i.url)
+      try {
+        host = new URL(host).host
+      } catch {
+        /* keep raw */
+      }
+      return { icon: icon(Camera), label: <>Reference screenshot of {host}</> }
+    }
+    case 'audit_page': {
+      const issues = Array.isArray(o.accessibility) ? o.accessibility.length : null
+      return {
+        icon: icon(ClipboardCheck),
+        label: (
+          <>
+            Audited {path}
+            {issues !== null ? (
+              <>
+                {' '}
+                ·{' '}
+                {issues === 0
+                  ? 'no accessibility issues'
+                  : `${issues} accessibility issue${issues === 1 ? '' : 's'}`}
+              </>
+            ) : null}
+          </>
+        ),
+      }
+    }
+    case 'web_search':
+      return { icon: icon(Search), label: <>Searched the web: “{str(i.query)}”</> }
+    case 'package_docs':
+      return {
+        icon: icon(BookOpen),
+        label: (
+          <>
+            Read docs:{' '}
+            <span className="font-mono text-[0.92em]">
+              {str(i.name)}
+              {o.version ? `@${String(o.version)}` : ''}
+            </span>
+          </>
+        ),
+      }
     case 'remember':
       return { icon: icon(Brain), label: <>Remembered: {str(i.content)}</> }
     case 'forget_memory':
@@ -129,16 +195,36 @@ function failed(step: ToolStepData): string | null {
 export function ToolStep({ step }: { step: ToolStepData }) {
   if (step.name === 'update_plan') return <PlanCard steps={step.input.steps} />
   if (step.output?.skipped === true) {
-    // The agent asked for a screenshot it didn't need (nothing changed / budget used).
+    // The agent asked for something it didn't need (nothing changed / budget used).
+    const what: Record<string, string> = {
+      generate_image: 'Skipped image generation (limit reached)',
+      web_search: 'Skipped a web search (limit reached)',
+      view_image: 'Skipped viewing an image (limit reached)',
+    }
     return (
-      <p className="flex items-center gap-2 py-0.5 text-xs text-faint">
-        <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden /> Skipped a repeat screenshot
+      <p
+        className="flex items-center gap-2 py-0.5 text-xs text-faint"
+        title={str(step.output.reason)}
+      >
+        <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden />{' '}
+        {what[step.name] ?? 'Skipped a repeat screenshot'}
       </p>
     )
   }
   const { icon, label } = describe(step)
   const error = failed(step)
-  const shot = typeof step.output?.screenshot === 'string' ? step.output.screenshot : null
+  const shot =
+    typeof step.output?.screenshot === 'string'
+      ? step.output.screenshot
+      : typeof step.output?.image === 'string'
+        ? step.output.image
+        : null
+  const sources =
+    step.name === 'web_search' && Array.isArray(step.output?.sources)
+      ? (step.output.sources as Array<{ title?: string; url?: string }>).filter((x) =>
+          x.url?.startsWith('http'),
+        )
+      : []
   const browserSteps = Array.isArray(step.output?.steps) ? (step.output.steps as Array<string>) : []
   return (
     <div className="text-xs">
@@ -161,6 +247,22 @@ export function ToolStep({ step }: { step: ToolStepData }) {
         <ul className="mb-1 ml-5.5 space-y-0.5 text-[11px] text-faint">
           {browserSteps.slice(0, 6).map((s, n) => (
             <li key={n}>{s}</li>
+          ))}
+        </ul>
+      )}
+      {sources.length > 0 && (
+        <ul className="mb-1 ml-5.5 space-y-0.5 text-[11px]">
+          {sources.slice(0, 5).map((source) => (
+            <li key={source.url} className="truncate">
+              <a
+                href={source.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-signal hover:underline"
+              >
+                {source.title || source.url}
+              </a>
+            </li>
           ))}
         </ul>
       )}

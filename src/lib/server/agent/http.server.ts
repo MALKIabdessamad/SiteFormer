@@ -18,6 +18,7 @@ import { ConfigError } from '../env.server'
 import { ownedProject } from '../projects.server'
 import { getRunRow, persistence } from './persistence.server'
 import { cancelRun, enqueueRun, isValidRunId, recoverRuns } from './runner.server'
+import { resolveUploads, saveUpload, UPLOAD_SCHEME } from './uploads.server'
 
 const MAX_PROMPT = 8000
 /** A from-start join waits this long for a run's first chunk (queued runs write one at once). */
@@ -49,26 +50,52 @@ export function errorResponse(error: unknown): Response {
   )
 }
 
-/** Plain text of the newest user message (UIMessage parts or ModelMessage content). */
-function lastUserText(messages: Array<UIMessage | ModelMessage>): string {
+/**
+ * The newest user message: its text and the uploads it references ("sf-upload:<id>"). Inline
+ * media (data/other URLs) is refused: files must go through /api/uploads first.
+ */
+function lastUserMessage(messages: Array<UIMessage | ModelMessage>): {
+  text: string
+  uploadIds: Array<string>
+} {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i] as UIMessage & ModelMessage
     if (message.role !== 'user') continue
-    if (Array.isArray(message.parts)) {
-      return message.parts
-        .map((part) => (part.type === 'text' ? part.content : ''))
-        .join('')
-        .trim()
+    if (typeof message.content === 'string') return { text: message.content.trim(), uploadIds: [] }
+    const raw: unknown = Array.isArray(message.parts) ? message.parts : message.content
+    const parts = (Array.isArray(raw) ? raw : []) as Array<Record<string, unknown>>
+    let text = ''
+    const uploadIds: Array<string> = []
+    for (const part of parts) {
+      if (part.type === 'text') {
+        // TanStack parts use `content`, AG-UI wire parts use `text`.
+        text +=
+          typeof part.content === 'string'
+            ? part.content
+            : typeof part.text === 'string'
+              ? part.text
+              : ''
+        continue
+      }
+      const source = part.source as { type?: string; value?: string } | undefined
+      if (
+        source?.type === 'url' &&
+        typeof source.value === 'string' &&
+        source.value.startsWith(UPLOAD_SCHEME)
+      ) {
+        uploadIds.push(source.value.slice(UPLOAD_SCHEME.length))
+      } else if (
+        part.type === 'image' ||
+        part.type === 'document' ||
+        part.type === 'audio' ||
+        part.type === 'video'
+      ) {
+        throw new AppError('Attach files with the paperclip (inline media is not accepted).')
+      }
     }
-    if (typeof message.content === 'string') return message.content.trim()
-    if (Array.isArray(message.content)) {
-      return message.content
-        .map((part) => (part.type === 'text' ? part.content : ''))
-        .join('')
-        .trim()
-    }
+    return { text: text.trim(), uploadIds }
   }
-  return ''
+  return { text: '', uploadIds: [] }
 }
 
 /** POST /api/agent: queue the user's message as a run and stream the run's log back. */
@@ -84,13 +111,21 @@ export async function postMessage(request: Request): Promise<Response> {
     throw new AppError('Invalid request.')
   })
   const project = await ownedProject(user.id, params.threadId)
-  const prompt = lastUserText(params.messages)
+  const message = lastUserMessage(params.messages)
+  const attachments = await resolveUploads(message.uploadIds, project.id, user.id)
+  const prompt = message.text || (attachments.length ? 'Use the attached files.' : '')
   if (!prompt) throw new AppError('Write a message first.')
   if (prompt.length > MAX_PROMPT)
     throw new AppError(`Keep messages under ${MAX_PROMPT} characters.`)
   if (!isValidRunId(params.runId)) throw new AppError('Invalid run id.')
 
-  await enqueueRun({ runId: params.runId, projectId: project.id, userId: user.id, prompt })
+  await enqueueRun({
+    runId: params.runId,
+    projectId: project.id,
+    userId: user.id,
+    prompt,
+    attachments,
+  })
   return resumeServerSentEventsResponse({
     adapter: memoryStream(
       { runId: params.runId, offset: '-1' },
@@ -138,4 +173,42 @@ export async function postRecover(request: Request): Promise<Response> {
     throw new AppError('Not found.', 'not_found')
   }
   return Response.json({ resumed: await recoverRuns() })
+}
+
+const uploadHits = new Map<string, Array<number>>()
+
+/** POST /api/uploads  (multipart: projectId, file) → the stored upload (one file per request). */
+export async function postUpload(request: Request): Promise<Response> {
+  const user = await authenticate(request.headers.get('authorization') ?? undefined)
+  const now = Date.now()
+  const hits = (uploadHits.get(user.id) ?? []).filter((t) => now - t < 60_000)
+  if (hits.length >= 40) throw new AppError('Too many uploads. Wait a minute.', 'limit')
+  hits.push(now)
+  uploadHits.set(user.id, hits)
+  if (uploadHits.size > 5000) uploadHits.clear()
+
+  const length = Number(request.headers.get('content-length') ?? 0)
+  if (length > 11 * 1024 * 1024) throw new AppError('Files can be up to 10 MB.')
+  const form = await request.formData().catch(() => {
+    throw new AppError('Invalid upload.')
+  })
+  const projectId = form.get('projectId')
+  const file = form.get('file')
+  if (typeof projectId !== 'string' || !(file instanceof File))
+    throw new AppError('Invalid upload.')
+  const project = await ownedProject(user.id, projectId)
+  const row = await saveUpload({
+    userId: user.id,
+    projectId: project.id,
+    name: file.name,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+  })
+  return Response.json({
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    mime: row.mime,
+    size: row.size,
+    storagePath: row.storage_path,
+  })
 }

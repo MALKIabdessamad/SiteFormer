@@ -1,6 +1,8 @@
 import type { SandboxSession } from '../sandbox-session.server'
 import { browserTools } from './browser.server'
 import { fileTools } from './files.server'
+import { mediaTools } from './media.server'
+import { researchTools } from './research.server'
 import { shellTools } from './shell.server'
 
 /**
@@ -8,5 +10,11 @@ import { shellTools } from './shell.server'
  * (remember / forget_memory) are added by the memory adapter.
  */
 export function agentTools(session: SandboxSession) {
-  return [...shellTools(session), ...fileTools(session), ...browserTools(session)]
+  return [
+    ...shellTools(session),
+    ...fileTools(session),
+    ...browserTools(session),
+    ...mediaTools(session),
+    ...researchTools(session),
+  ]
 }

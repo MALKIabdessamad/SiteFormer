@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as ApiAgentRouteImport } from './routes/api/agent'
 import { Route as ApiLogRouteImport } from './routes/api/log'
+import { Route as ApiUploadsRouteImport } from './routes/api/uploads'
 import { Route as AuthenticatedProjectProjectIdRouteImport } from './routes/_authenticated/project.$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -40,6 +41,11 @@ const ApiLogRoute = ApiLogRouteImport.update({
   path: '/api/log',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUploadsRoute = ApiUploadsRouteImport.update({
+  id: '/api/uploads',
+  path: '/api/uploads',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedProjectProjectIdRoute =
   AuthenticatedProjectProjectIdRouteImport.update({
     id: '/project/$projectId',
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
   '/api/log': typeof ApiLogRoute
+  '/api/uploads': typeof ApiUploadsRoute
   '/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRoutesByTo {
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
   '/api/log': typeof ApiLogRoute
+  '/api/uploads': typeof ApiUploadsRoute
   '/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRoutesById {
@@ -68,14 +76,26 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/api/agent': typeof ApiAgentRoute
   '/api/log': typeof ApiLogRoute
+  '/api/uploads': typeof ApiUploadsRoute
   '/_authenticated/project/$projectId': typeof AuthenticatedProjectProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/dashboard' | '/api/agent' | '/api/log' | '/project/$projectId'
+    | '/'
+    | '/dashboard'
+    | '/api/agent'
+    | '/api/log'
+    | '/api/uploads'
+    | '/project/$projectId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/api/agent' | '/api/log' | '/project/$projectId'
+  to:
+    | '/'
+    | '/dashboard'
+    | '/api/agent'
+    | '/api/log'
+    | '/api/uploads'
+    | '/project/$projectId'
   id:
     | '__root__'
     | '/'
@@ -83,6 +103,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/api/agent'
     | '/api/log'
+    | '/api/uploads'
     | '/_authenticated/project/$projectId'
   fileRoutesById: FileRoutesById
 }
@@ -91,6 +112,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   ApiAgentRoute: typeof ApiAgentRoute
   ApiLogRoute: typeof ApiLogRoute
+  ApiUploadsRoute: typeof ApiUploadsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -130,6 +152,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiLogRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/uploads': {
+      id: '/api/uploads'
+      path: '/api/uploads'
+      fullPath: '/api/uploads'
+      preLoaderRoute: typeof ApiUploadsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/project/$projectId': {
       id: '/_authenticated/project/$projectId'
       path: '/project/$projectId'
@@ -158,6 +187,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   ApiAgentRoute: ApiAgentRoute,
   ApiLogRoute: ApiLogRoute,
+  ApiUploadsRoute: ApiUploadsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

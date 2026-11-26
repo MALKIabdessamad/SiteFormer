@@ -3,14 +3,27 @@ import { ImageOff } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { getSupabase } from '~/lib/supabase/client'
 
-const BUCKET = 'agent-screenshots'
+const SCREENSHOTS = 'agent-screenshots'
 /** Signed URLs live 1 hour; cache them so re-renders don't re-sign. */
-const cache = new Map<string, { url: string; expires: number }>()
+const cache = new Map<string, { url: string; expires: number }>() // key: bucket/path
 
-/** A screenshot the agent took, from the private bucket (only the project owner can read it). */
-export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
+/**
+ * An image from a private bucket (screenshots, generated images, uploads). Only the project owner
+ * can read it (Storage RLS), via a short-lived signed URL.
+ */
+export function ScreenshotImage({
+  path,
+  alt,
+  bucket = SCREENSHOTS,
+  className = 'max-h-72 w-full rounded-xl border bg-white object-cover object-top',
+}: {
+  path: string
+  alt: string
+  bucket?: string
+  className?: string
+}) {
   const [url, setUrl] = useState<string | null>(() => {
-    const hit = cache.get(path)
+    const hit = cache.get(`${bucket}/${path}`)
     return hit && hit.expires > Date.now() ? hit.url : null
   })
   const [failed, setFailed] = useState(false)
@@ -19,7 +32,7 @@ export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
     if (url) return
     let live = true
     void getSupabase()
-      .storage.from(BUCKET)
+      .storage.from(bucket)
       .createSignedUrl(path, 3600)
       .then(({ data, error }) => {
         if (!live) return
@@ -30,18 +43,21 @@ export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
           })
           return setFailed(true)
         }
-        cache.set(path, { url: data.signedUrl, expires: Date.now() + 55 * 60 * 1000 })
+        cache.set(`${bucket}/${path}`, {
+          url: data.signedUrl,
+          expires: Date.now() + 55 * 60 * 1000,
+        })
         setUrl(data.signedUrl)
       })
     return () => {
       live = false
     }
-  }, [path, url])
+  }, [bucket, path, url])
 
   if (failed) {
     return (
       <div className="mt-2 flex h-24 items-center justify-center gap-2 rounded-xl border text-xs text-faint">
-        <ImageOff className="h-4 w-4" aria-hidden /> Screenshot unavailable
+        <ImageOff className="h-4 w-4" aria-hidden /> Image unavailable
       </div>
     )
   }
@@ -59,7 +75,7 @@ export function ScreenshotImage({ path, alt }: { path: string; alt: string }) {
             setFailed(true)
           }}
           loading="lazy"
-          className="max-h-72 w-full rounded-xl border bg-white object-cover object-top"
+          className={className}
         />
       ) : (
         <div className="h-40 animate-pulse rounded-xl border bg-ink/[0.04]" />

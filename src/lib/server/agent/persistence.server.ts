@@ -32,6 +32,8 @@ export type AgentRunRow = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
+  /** Upload ids attached to this run's message. */
+  attachments: Array<string>
   record: Partial<RunRecord>
   created_at: string
   started_at: string | null

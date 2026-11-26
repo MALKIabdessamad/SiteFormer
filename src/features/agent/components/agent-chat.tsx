@@ -4,6 +4,9 @@ import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '~/features/projects/types'
 import { useAgentChat } from '../hooks/use-agent-chat'
+import { useAttachments } from '../hooks/use-attachments'
+import { uploadParts } from '../lib/attachments'
+import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns } from '../lib/turns'
 import { CheckpointCard } from './checkpoint-card'
@@ -34,6 +37,8 @@ export function AgentChat({
   const chat = useAgentChat(project.id)
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState('')
+  const attachments = useAttachments(project.id)
+  const [dragging, setDragging] = useState(false)
   const listRef = useRef<HTMLOListElement>(null)
   const stickToBottom = useRef(true)
 
@@ -71,12 +76,23 @@ export function AgentChat({
   const send = async (event?: FormEvent) => {
     event?.preventDefault()
     const text = draft.trim()
-    if (!text || busy) return
+    const uploads = attachments.ready
+    if ((!text && uploads.length === 0) || busy || attachments.uploading) return
     setSendError('')
     setDraft('')
+    attachments.clear()
     stickToBottom.current = true
     try {
-      await chat.sendMessage(text)
+      if (uploads.length) {
+        await chat.sendMessage({
+          content: [
+            { type: 'text', content: text || 'Use the attached files.' },
+            ...uploadParts(uploads),
+          ],
+        } as Parameters<typeof chat.sendMessage>[0])
+      } else {
+        await chat.sendMessage(text)
+      }
     } catch (err) {
       setDraft(text)
       const message = err instanceof Error ? err.message : 'Could not send. Try again.'
@@ -112,6 +128,7 @@ export function AgentChat({
           const finished = isSettledRun(run)
           return (
             <li key={turn.key} className="space-y-2">
+              {turn.attachments.length > 0 && <MessageAttachments ids={turn.attachments} />}
               {turn.user !== null && (
                 <div className="flex justify-end">
                   <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
@@ -159,7 +176,25 @@ export function AgentChat({
         )}
       </ol>
 
-      <form onSubmit={send} className="shrink-0 p-3">
+      <form
+        onSubmit={send}
+        className="shrink-0 p-3"
+        onDragOver={(e) => {
+          if (Array.from(e.dataTransfer.types).includes('Files')) {
+            e.preventDefault()
+            setDragging(true)
+          }
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          attachments.add(Array.from(e.dataTransfer.files))
+        }}
+      >
+        {attachments.notice && (
+          <p className="mb-2 px-1 text-xs text-danger">{attachments.notice}</p>
+        )}
         {(sendError || (chat.error && !activeRun)) && (
           <p
             role="alert"
@@ -168,45 +203,64 @@ export function AgentChat({
             {sendError || chat.error?.message}
           </p>
         )}
-        <div className="flex items-end gap-2 rounded-3xl p-2.5 box-sculpted focus-within:border-signal/70">
-          <label htmlFor="agent-input" className="sr-only">
-            Message the agent
-          </label>
-          <textarea
-            id="agent-input"
-            rows={1}
-            value={draft}
-            maxLength={MAX_MESSAGE}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-            placeholder={busy ? 'The agent is working… (you can stop it)' : 'Ask for a change…'}
-            className="block max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
-          />
-          {busy ? (
-            <button
-              type="button"
-              onClick={() => void chat.cancel(activeRun?.id ?? chat.runId ?? undefined)}
-              aria-label="Stop the agent"
-              title="Stop"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink box-sculpted hover:border-white/35"
-            >
-              <Square className="h-3.5 w-3.5 fill-current" />
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!draft.trim()}
-              aria-label="Send"
-              className="grid h-10 w-10 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ArrowUp className="h-4 w-4" />
-            </button>
+        <div
+          className={cn(
+            'rounded-3xl p-2.5 box-sculpted focus-within:border-signal/70',
+            dragging && 'border-signal/70 bg-signal/5',
           )}
+        >
+          <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
+          <div className="flex items-end gap-2">
+            <AttachButton onFiles={attachments.add} count={attachments.items.length} />
+            <label htmlFor="agent-input" className="sr-only">
+              Message the agent
+            </label>
+            <textarea
+              id="agent-input"
+              rows={1}
+              value={draft}
+              maxLength={MAX_MESSAGE}
+              onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.files)
+                if (files.length) {
+                  e.preventDefault()
+                  attachments.add(files)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+              placeholder={busy ? 'The agent is working… (you can stop it)' : 'Ask for a change…'}
+              className="block max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-faint"
+            />
+            {busy ? (
+              <button
+                type="button"
+                onClick={() => void chat.cancel(activeRun?.id ?? chat.runId ?? undefined)}
+                aria-label="Stop the agent"
+                title="Stop"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink box-sculpted hover:border-white/35"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={
+                  (!draft.trim() && attachments.ready.length === 0) || attachments.uploading
+                }
+                title={attachments.uploading ? 'Uploading files…' : undefined}
+                aria-label="Send"
+                className="grid h-10 w-10 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </div>

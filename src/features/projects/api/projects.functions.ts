@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { restoreCheckpoint } from '~/lib/server/agent/checkpoints.server'
 import { getRunRow } from '~/lib/server/agent/persistence.server'
 import { removeProjectScreenshots } from '~/lib/server/agent/screenshots.server'
+import { removeProjectUploads, resolveUploads } from '~/lib/server/agent/uploads.server'
 import {
   appendAssistantNote,
   enqueueRun,
@@ -39,6 +40,15 @@ const CreateInput = validate(
       .trim()
       .min(PROMPT_MIN_LENGTH, 'Describe your site in a few more words.')
       .max(PROMPT_MAX_LENGTH, `Keep the description under ${PROMPT_MAX_LENGTH} characters.`),
+    /** The browser will attach files first, then call startFirstRun. */
+    deferRun: z.boolean().optional(),
+  }),
+)
+
+const FirstRunInput = validate(
+  z.object({
+    projectId: z.uuid('Project not found.'),
+    uploadIds: z.array(z.uuid('Attachment not found.')).max(6, 'Attach up to 6 files.'),
   }),
 )
 
@@ -86,11 +96,47 @@ export const createProject = createServerFn({ method: 'POST' })
         .single<{ id: string; user_id: string; sandbox_id: string | null }>()
       if (error) throw error
 
-      await enqueueRun({ runId: newRunId(), projectId: project.id, userId, prompt: data.prompt })
+      if (!data.deferRun) {
+        await enqueueRun({ runId: newRunId(), projectId: project.id, userId, prompt: data.prompt })
+      }
       log.info('Project created', { event: 'project.created', projectId: project.id, userId })
       background(generateProjectName(data.prompt).then((name) => saveProject(project.id, { name })))
       background(ensureProvisioned(provisionTarget(project)))
       return { id: project.id }
+    }),
+  )
+
+/**
+ * Starts a project's first run with files the user attached on the dashboard (createProject was
+ * called with deferRun). Only once per project: later messages go through the chat.
+ */
+export const startFirstRun = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(FirstRunInput)
+  .handler(({ data, context }) =>
+    safely('startFirstRun', async () => {
+      const project = await ownedProject(context.user.id, data.projectId)
+      const db = supabaseAdmin()
+      const { count } = await db
+        .from('agent_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', project.id)
+      if ((count ?? 0) > 0) return { ok: true } // already started (double click / retry)
+      const { data: row, error } = await db
+        .from('projects')
+        .select('prompt')
+        .eq('id', project.id)
+        .single<{ prompt: string }>()
+      if (error) throw error
+      const attachments = await resolveUploads(data.uploadIds, project.id, context.user.id)
+      await enqueueRun({
+        runId: newRunId(),
+        projectId: project.id,
+        userId: context.user.id,
+        prompt: row.prompt,
+        attachments,
+      })
+      return { ok: true }
     }),
   )
 
@@ -179,6 +225,7 @@ export const deleteProject = createServerFn({ method: 'POST' })
       const { error } = await supabaseAdmin().from('projects').delete().eq('id', project.id)
       if (error) throw error
       await removeProjectScreenshots(project.id)
+      await removeProjectUploads(project.id)
       log.info('Project deleted', {
         event: 'project.deleted',
         projectId: project.id,

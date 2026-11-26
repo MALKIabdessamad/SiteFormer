@@ -11,6 +11,8 @@ export type Segment =
 export type Turn = {
   key: string
   user: string | null
+  /** Upload ids attached to the user's message. */
+  attachments: Array<string>
   segments: Array<Segment>
   notes: Array<string>
 }
@@ -27,6 +29,17 @@ function parseJson(value: unknown): Record<string, unknown> | null {
     return { result: value }
   }
 }
+
+const UPLOAD = 'sf-upload:'
+
+/** Upload ids referenced by a message's image/document parts. */
+const attachmentsOf = (message: UIMessage): Array<string> =>
+  message.parts.flatMap((part) => {
+    const source = (part as { source?: { type?: string; value?: string } }).source
+    return source?.type === 'url' && source.value?.startsWith(UPLOAD)
+      ? [source.value.slice(UPLOAD.length)]
+      : []
+  })
 
 const textOf = (message: UIMessage) =>
   message.parts
@@ -50,13 +63,19 @@ export function buildTurns(messages: ReadonlyArray<UIMessage>, streaming: boolea
   let current: Turn | null = null
   for (const message of messages) {
     if (message.role === 'user') {
-      current = { key: message.id, user: textOf(message), segments: [], notes: [] }
+      current = {
+        key: message.id,
+        user: textOf(message),
+        attachments: attachmentsOf(message),
+        segments: [],
+        notes: [],
+      }
       turns.push(current)
       continue
     }
     if (message.role !== 'assistant') continue
     if (!current) {
-      current = { key: `pre-${message.id}`, user: null, segments: [], notes: [] }
+      current = { key: `pre-${message.id}`, user: null, attachments: [], segments: [], notes: [] }
       turns.push(current)
     }
     // A plain restore note (no tools) is shown as a system-style line, not as a reply.

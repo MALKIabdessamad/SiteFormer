@@ -61,7 +61,15 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   (exact, with safe fallbacks for quote/escape/indent slips), `delete_path`, `move_path`,
   `run_command`, `restart_dev_server`, `read_dev_logs`, `check_project` (types + preview + dev
   errors), `screenshot`, `inspect_page`, `interact` (headless Chromium **in the sandbox**,
-  installed without root), `fetch_url`, `remember`, `forget_memory`.
+  installed without root), `audit_page` (axe accessibility + SEO + performance),
+  `reference_screenshot` (a public site the user names), `view_image` (an upload, a project image
+  or an earlier screenshot), `generate_image` (budgeted: `IMAGE_MAX_PER_RUN`), `web_search`
+  (budgeted: `SEARCH_MAX_PER_RUN`), `package_docs` (README + exports of the installed version),
+  `fetch_url`, `remember`, `forget_memory`.
+- **Attachments:** the composer (paperclip, paste, drag & drop) uploads images and text files to
+  the private `agent-uploads` bucket via `POST /api/uploads` (magic-byte checked, 10 MB, 6 per
+  message). The run copies them into the project (`public/uploads/`, `content/uploads/`; large
+  images re-encoded to WebP) and the model sees attached images once.
 - **Memory** (`@tanstack/ai-memory`, Supabase adapter): the agent saves durable facts with
   `remember` (no extra model call per turn); up to 8 relevant memories are recalled each turn.
 - **Token-light:** stable system prompt (provider prompt cache; ~85% of input tokens were cached
@@ -167,7 +175,8 @@ needs them.
 | `agent_memories`            | What the agent remembers (`project_id` null = user-wide preference)                                                                                                                        |
 | Storage `agent-screenshots` | Private bucket; owners read via signed URLs                                                                                                                                                |
 
-RLS: browsers can only `select` their own `projects`, `agent_runs` and `agent_memories`; the
+RLS: browsers can only `select` their own `projects`, `agent_runs`, `agent_memories` and
+`agent_uploads` (and read their own files in the private storage buckets); the
 transcript and metadata are server-only; all writes go through the server (secret key).
 `projects` and `agent_runs` are in the `supabase_realtime` publication.
 
@@ -178,7 +187,8 @@ transcript and metadata are server-only; all writes go through the server (secre
 2. Variables:
    - **Required:** `SUPABASE_SECRET_KEY`, `AGENT37_API_KEY`, `OPENROUTER_API_KEY` (server-only).
    - Optional: `NAMING_MODEL`, `NAMING_FALLBACK_MODELS`, `STARTER_REPO`, `STARTER_REF`,
-     `STARTER_PORT`, `MAX_PROJECTS_PER_USER`,
+     `STARTER_PORT`, `MAX_PROJECTS_PER_USER`, `AGENT_MODEL`, `IMAGE_MODEL`, `IMAGE_MAX_PER_RUN`,
+     `SEARCH_MODEL`, `SEARCH_MAX_PER_RUN`,
      `AGENT37_TEMPLATE`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (inlined into
      the browser bundle at **build** time, so redeploy after changing them). `PORT` is set by
      Railway automatically.

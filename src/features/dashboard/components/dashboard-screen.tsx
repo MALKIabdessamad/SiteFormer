@@ -2,7 +2,8 @@ import { useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Alert } from '~/components/ui/alert'
 import { authService, useRedirectOnSignOut } from '~/features/auth'
-import { createProject, useProjects } from '~/features/projects'
+import { useAttachments } from '~/features/agent/hooks/use-attachments'
+import { createProject, startFirstRun, useProjects } from '~/features/projects'
 import { toErrorMessage } from '~/lib/utils/errors'
 import { useSidebar } from '../hooks/use-sidebar'
 import { AppSidebar } from './app-sidebar'
@@ -21,6 +22,7 @@ export function DashboardScreen({ email }: { email: string }) {
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [signingOut, setSigningOut] = useState(false)
+  const attachments = useAttachments()
 
   useRedirectOnSignOut()
 
@@ -36,7 +38,14 @@ export function DashboardScreen({ email }: { email: string }) {
     setCreating(true)
     setError('')
     try {
-      const { id } = await createProject({ data: { prompt } })
+      const withFiles = attachments.items.length > 0
+      const { id } = await createProject({ data: { prompt, deferRun: withFiles } })
+      if (withFiles) {
+        // The project exists now: upload the files to it, then start the first run with them.
+        const uploads = await attachments.uploadAll(id)
+        await startFirstRun({ data: { projectId: id, uploadIds: uploads.map((u) => u.id) } })
+        attachments.clear()
+      }
       promptRef.current?.clear()
       await navigate({ to: '/project/$projectId', params: { projectId: id } })
     } catch (err) {
@@ -99,6 +108,7 @@ export function DashboardScreen({ email }: { email: string }) {
             <PromptBox
               ref={promptRef}
               busy={creating}
+              attachments={attachments}
               onSubmit={(text) => void handlePrompt(text)}
             />
           </div>

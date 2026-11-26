@@ -45,6 +45,14 @@ const schema = z.object({
   AGENT_MAX_STEPS: z.coerce.number().int().min(10).max(1000).default(150),
   /** Context budget: older tool output is trimmed, then old turns summarized, above this. */
   AGENT_CONTEXT_TOKENS: z.coerce.number().int().min(20_000).max(900_000).default(90_000),
+  /** OpenRouter image model for generate_image (~$0.03 per image). */
+  IMAGE_MODEL: z.string().min(3).default('google/gemini-3.1-flash-lite-image'),
+  /** generate_image calls allowed per run. 0 disables image generation. */
+  IMAGE_MAX_PER_RUN: z.coerce.number().int().min(0).max(10).default(2),
+  /** Cheap OpenRouter model that runs web searches (OpenRouter web plugin, ~$0.007 each). */
+  SEARCH_MODEL: z.string().min(3).default('openai/gpt-4.1-nano'),
+  /** web_search calls allowed per run. 0 disables web search. */
+  SEARCH_MAX_PER_RUN: z.coerce.number().int().min(0).max(10).default(3),
   /** Cap on projects (= sandboxes) per user. */
   MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(20),
 })

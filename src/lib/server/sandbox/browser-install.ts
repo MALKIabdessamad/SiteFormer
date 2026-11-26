@@ -5,7 +5,8 @@
  * becomes ready) and a tool call never race. ~15 s the first time, instant afterwards.
  */
 export const BROWSER_DIR = '/home/node/.siteformer/browser'
-const READY_MARKER = `${BROWSER_DIR}/.ready-v1`
+// Bump the version when the install changes: existing sandboxes then upgrade on next use.
+const READY_MARKER = `${BROWSER_DIR}/.ready-v2`
 const LIBS = `${BROWSER_DIR}/libs`
 
 /** Libraries headless Chromium needs on Debian 12 that the base image may lack. */
@@ -56,6 +57,7 @@ mkdir -p "$B/libs" "$B/debs" "$HOME/.siteformer/apt/lists/partial" "$HOME/.sitef
 cd "$B"
 [ -f package.json ] || npm init -y >/dev/null
 [ -f node_modules/playwright-core/package.json ] || npm i --silent --no-audit --no-fund playwright-core@1.56.1 >/tmp/sf-pw.log 2>&1
+[ -f node_modules/axe-core/axe.min.js ] || npm i --silent --no-audit --no-fund axe-core@4.10.3 >/tmp/sf-axe.log 2>&1
 npx playwright-core install chromium-headless-shell >/tmp/sf-chromium.log 2>&1
 A="-o Dir::State::Lists=$HOME/.siteformer/apt/lists -o Dir::Cache=$HOME/.siteformer/apt/cache -o Debug::NoLocking=1"
 NEED=""; for p in ${CHROMIUM_LIBS}; do dpkg -s "$p" >/dev/null 2>&1 || NEED="$NEED $p"; done

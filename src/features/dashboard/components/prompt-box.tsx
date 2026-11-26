@@ -4,6 +4,8 @@ import {
   PROMPT_MAX_LENGTH as MAX_LENGTH,
   PROMPT_MIN_LENGTH as MIN_LENGTH,
 } from '~/features/projects/lib/constants'
+import { AttachButton, AttachmentChips } from '~/features/agent/components/attachments'
+import type { Attachment } from '~/features/agent/hooks/use-attachments'
 import { storage } from '~/lib/utils/storage'
 
 export type PromptBoxHandle = {
@@ -15,13 +17,20 @@ type PromptBoxProps = {
   onSubmit: (text: string) => void
   busy?: boolean
   ref?: Ref<PromptBoxHandle>
+  /** Files to send with the first prompt (logo, photos, copy). */
+  attachments?: {
+    items: Array<Attachment>
+    notice: string
+    add: (files: Array<File>) => void
+    remove: (key: string) => void
+  }
 }
 
 const MAX_HEIGHT = 220
 const DRAFT_KEY = 'siteform:draft'
 
 /** Auto-growing prompt input. Enter submits, Shift+Enter adds a line. Drafts survive reloads. */
-export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
+export function PromptBox({ onSubmit, busy = false, ref, attachments }: PromptBoxProps) {
   const [text, setText] = useState(() => storage.get(DRAFT_KEY, 'session') ?? '')
   const textarea = useRef<HTMLTextAreaElement>(null)
 
@@ -45,7 +54,18 @@ export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
   }
 
   return (
-    <div className="w-full max-w-[670px] rounded-3xl p-3 text-left box-sculpted focus-within:border-signal/70 sm:p-3.5">
+    <div
+      className="w-full max-w-[670px] rounded-3xl p-3 text-left box-sculpted focus-within:border-signal/70 sm:p-3.5"
+      onDragOver={(e) => {
+        if (attachments && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+      }}
+      onDrop={(e) => {
+        if (!attachments) return
+        e.preventDefault()
+        attachments.add(Array.from(e.dataTransfer.files))
+      }}
+    >
+      {attachments && <AttachmentChips items={attachments.items} onRemove={attachments.remove} />}
       <label htmlFor="prompt" className="sr-only">
         Describe your website
       </label>
@@ -57,6 +77,13 @@ export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
         maxLength={MAX_LENGTH}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
+        onPaste={(e) => {
+          const files = Array.from(e.clipboardData.files)
+          if (attachments && files.length) {
+            e.preventDefault()
+            attachments.add(files)
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault()
@@ -68,8 +95,21 @@ export function PromptBox({ onSubmit, busy = false, ref }: PromptBoxProps) {
         className="block max-h-[220px] min-h-[52px] w-full resize-none bg-transparent px-1 text-base leading-relaxed text-ink outline-none placeholder:text-faint"
       />
       <div className="mt-2 flex items-center justify-between gap-3">
-        <span className="text-xs text-faint" aria-live="polite">
-          {text.length > MAX_LENGTH * 0.9 ? `${text.length}/${MAX_LENGTH}` : ''}
+        <span className="flex min-w-0 items-center gap-1 text-xs text-faint" aria-live="polite">
+          {attachments && (
+            <AttachButton
+              onFiles={attachments.add}
+              disabled={busy}
+              count={attachments.items.length}
+            />
+          )}
+          {attachments?.notice ? (
+            <span className="truncate text-danger">{attachments.notice}</span>
+          ) : text.length > MAX_LENGTH * 0.9 ? (
+            `${text.length}/${MAX_LENGTH}`
+          ) : (
+            ''
+          )}
         </span>
         <button
           type="button"

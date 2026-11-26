@@ -5,6 +5,7 @@ export {
   openProject,
   restoreProject,
   retryProject,
+  startFirstRun,
 } from './api/projects.functions'
 export { PROMPT_MAX_LENGTH } from './lib/constants'
 export { useProject, useProjects } from './hooks/use-projects'

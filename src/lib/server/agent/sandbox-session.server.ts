@@ -17,7 +17,7 @@ export type SandboxSession = {
   /** Port of the starter's dev server. */
   previewPort: number
   /** Screenshots the model should see on its next call (consumed by the vision middleware). */
-  pendingImages: Array<{ mediaType: 'image/jpeg'; base64: string; caption: string }>
+  pendingImages: Array<{ mediaType: string; base64: string; caption: string }>
   /** Count of screenshots taken this run (storage file names + per-run budget). */
   screenshotCount: number
   /** Bumped whenever a tool may have changed project files (write/edit/delete/move/command). */
@@ -26,6 +26,15 @@ export type SandboxSession = {
   screenshotVersions: Map<string, number>
   /** Last check_project result and the workspace version it was taken at. */
   lastCheck: { version: number; result: Record<string, unknown> } | null
+  /** Per-run usage of paid / token-heavy tools (budgets). */
+  usage: { imagesGenerated: number; webSearches: number; imageViews: number }
+  /** The project's uploads by id (maps "sf-upload:<id>" parts to names and project paths). */
+  uploads: Map<
+    string,
+    { name: string; kind: 'image' | 'document'; mime: string; project_path: string | null }
+  >
+  /** Images attached to THIS run's message, shown to the model on every call of the run. */
+  attachedImages: Map<string, { mime: string; base64: string }>
 }
 
 /** Creates a session with fresh per-run bookkeeping. */
@@ -42,6 +51,9 @@ export function createSession(
     workspaceVersion: 0,
     screenshotVersions: new Map(),
     lastCheck: null,
+    usage: { imagesGenerated: 0, webSearches: 0, imageViews: 0 },
+    uploads: new Map(),
+    attachedImages: new Map(),
   }
 }
 
@@ -140,7 +152,32 @@ export async function readText(session: SandboxSession, absolute: string): Promi
 
 /** Writes UTF-8 text (creating folders). Large files are sent in chunks. */
 export async function writeText(session: SandboxSession, absolute: string, content: string) {
-  const b64 = Buffer.from(content, 'utf8').toString('base64')
+  await writeBytes(session, absolute, Buffer.from(content, 'utf8'))
+}
+
+/** Reads a file's raw bytes (max `maxBytes`). */
+export async function readBytes(
+  session: SandboxSession,
+  absolute: string,
+  maxBytes = 8_000_000,
+): Promise<Buffer> {
+  const result = await sh(
+    session,
+    `if [ ! -f ${shellQuote(absolute)} ]; then echo __MISSING__; exit 0; fi; ` +
+      `size=$(stat -c %s ${shellQuote(absolute)}); if [ "$size" -gt ${maxBytes} ]; then echo __TOO_BIG__; exit 0; fi; ` +
+      `base64 -w0 ${shellQuote(absolute)}`,
+    { timeoutSeconds: 60 },
+  )
+  const out = result.stdout.trim()
+  if (out === '__MISSING__') throw new ToolError(`File not found: ${relativePath(absolute)}`)
+  if (out === '__TOO_BIG__') throw new ToolError(`${relativePath(absolute)} is too large.`)
+  if (result.exitCode !== 0) throw new ToolError(`Could not read ${relativePath(absolute)}.`)
+  return Buffer.from(out, 'base64')
+}
+
+/** Writes raw bytes (creating folders). Large files are sent in chunks. */
+export async function writeBytes(session: SandboxSession, absolute: string, bytes: Uint8Array) {
+  const b64 = Buffer.from(bytes).toString('base64')
   const dir = absolute.slice(0, absolute.lastIndexOf('/'))
   const tmp = `/tmp/sf-write-${crypto.randomUUID()}.b64`
   for (let i = 0; i < b64.length || i === 0; i += CHUNK) {

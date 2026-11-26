@@ -1,4 +1,4 @@
-import type { ChatMiddleware, ModelMessage } from '@tanstack/ai'
+import type { ChatMiddleware, ContentPart, ModelMessage } from '@tanstack/ai'
 import { errorFields, log } from '../log.server'
 import { persistence } from './persistence.server'
 import type { SandboxSession } from './sandbox-session.server'
@@ -141,5 +141,80 @@ function safeParse(json: string): unknown {
     return JSON.parse(json)
   } catch {
     return undefined
+  }
+}
+
+const UPLOAD_SCHEME = 'sf-upload:'
+
+/** "sf-upload:<id>" of an image/document part, or null. */
+function uploadId(part: ContentPart): string | null {
+  if (part.type !== 'image' && part.type !== 'document') return null
+  const source = (part as { source?: { type?: string; value?: string } }).source
+  return source?.type === 'url' && source.value?.startsWith(UPLOAD_SCHEME)
+    ? source.value.slice(UPLOAD_SCHEME.length)
+    : null
+}
+
+/** Replaces attachment references with text the model can use (never sends "sf-upload:" URLs). */
+export function stripAttachments(
+  messages: Array<ModelMessage>,
+  describe: (id: string) => string,
+): Array<ModelMessage> {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message
+    if (!message.content.some((part) => uploadId(part))) return message
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        const id = uploadId(part)
+        return id ? ({ type: 'text', content: describe(id) } as ContentPart) : part
+      }),
+    }
+  })
+}
+
+/**
+ * Attached files in the model's context: images attached to THIS run's message are sent as real
+ * images on every model call of the run (same bytes each call, so the provider's prompt cache
+ * keeps them cheap and the model never has to re-open them). Attachments of earlier messages
+ * become a one-line note with the file's path in the project (view_image to look again).
+ */
+export function attachmentsMiddleware(session: SandboxSession): ChatMiddleware {
+  const describe = (id: string) => {
+    const upload = session.uploads.get(id)
+    if (!upload) return '[Attachment no longer available]'
+    const where = upload.project_path ? ` → ${upload.project_path}` : ''
+    const shown = session.attachedImages.has(id)
+    return upload.kind === 'image'
+      ? `[Attached image "${upload.name}"${where}${upload.project_path ? ` (use as /${upload.project_path.replace(/^public\//, '')}${shown ? '; shown below' : '; view_image to look at it'})` : ''}]`
+      : `[Attached file "${upload.name}"${where}${upload.project_path ? ' (read it with read_file)' : ''}]`
+  }
+  return {
+    name: 'siteformer-attachments',
+    onConfig(ctx, config) {
+      if (ctx.phase !== 'beforeModel') return undefined
+      const base = config.providerMessages ?? config.messages
+      const messages = base.map((message) => {
+        if (!Array.isArray(message.content) || !message.content.some((p) => uploadId(p)))
+          return message
+        return {
+          ...message,
+          content: message.content.flatMap((part): Array<ContentPart> => {
+            const id = uploadId(part)
+            if (!id) return [part]
+            const image = session.attachedImages.get(id)
+            if (!image) return [{ type: 'text', content: describe(id) } as ContentPart]
+            return [
+              { type: 'text', content: describe(id) } as ContentPart,
+              {
+                type: 'image',
+                source: { type: 'data', value: image.base64, mimeType: image.mime },
+              } as ContentPart,
+            ]
+          }),
+        }
+      })
+      return { providerMessages: messages }
+    },
   }
 }

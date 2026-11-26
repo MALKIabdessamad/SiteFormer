@@ -14,6 +14,7 @@ import {
   maxIterations,
   memoryStream,
   requestRunCancel,
+  type ContentPart,
   type ModelMessage,
   type StreamChunk,
 } from '@tanstack/ai'
@@ -23,6 +24,7 @@ import {
   conversationSummarizer,
   summarizeOldest,
   withCompaction,
+  type Summarizer,
 } from '@tanstack/ai-compaction'
 import { memoryMiddleware } from '@tanstack/ai-memory'
 import { createOpenRouterText } from '@tanstack/ai-openrouter'
@@ -35,7 +37,21 @@ import { ensureProvisioned, isBusy } from '../sandbox/provision.server'
 import { supabaseAdmin } from '../supabase-admin.server'
 import { commitAll, ensureRepo, filesChanged } from './checkpoints.server'
 import { supabaseMemory } from './memory.server'
-import { loggingMiddleware, progressSaverMiddleware, visionMiddleware } from './middleware.server'
+import {
+  attachmentsMiddleware,
+  loggingMiddleware,
+  progressSaverMiddleware,
+  stripAttachments,
+  visionMiddleware,
+} from './middleware.server'
+import { optimizeImage } from './tools/browser.server'
+import {
+  copyUploadsIntoProject,
+  downloadUpload,
+  projectUploads,
+  UPLOAD_SCHEME,
+  type UploadRow,
+} from './uploads.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
 import { runContext, SYSTEM_PROMPT } from './prompt.server'
 import { createSession, type SandboxSession } from './sandbox-session.server'
@@ -63,12 +79,23 @@ async function updateRun(runId: string, patch: Partial<AgentRunRow>) {
   if (error) throw new Error(`Could not update run ${runId}: ${error.message}`)
 }
 
-async function appendUserMessage(projectId: string, prompt: string) {
+async function appendUserMessage(projectId: string, prompt: string, attachments: Array<UploadRow>) {
   const messages = await persistence.stores.messages.loadThread(projectId)
-  await persistence.stores.messages.saveThread(projectId, [
-    ...messages,
-    { role: 'user', content: prompt },
-  ])
+  // Attachments stay references ("sf-upload:<id>"): the transcript never holds file bytes.
+  const content: ModelMessage['content'] = attachments.length
+    ? [
+        { type: 'text', content: prompt },
+        ...attachments.map(
+          (a) =>
+            ({
+              type: a.kind,
+              source: { type: 'url', value: `${UPLOAD_SCHEME}${a.id}`, mimeType: a.mime },
+              metadata: { name: a.name },
+            }) as ContentPart,
+        ),
+      ]
+    : prompt
+  await persistence.stores.messages.saveThread(projectId, [...messages, { role: 'user', content }])
 }
 
 /**
@@ -80,7 +107,10 @@ export async function enqueueRun(input: {
   projectId: string
   userId: string
   prompt: string
+  /** Validated uploads (see resolveUploads). */
+  attachments?: Array<UploadRow>
 }): Promise<{ runId: string }> {
+  const attachments = input.attachments ?? []
   const { runId, projectId, userId } = input
   const prompt = input.prompt.trim()
   if (!isValidRunId(runId)) throw new AppError('Invalid run id.')
@@ -95,7 +125,14 @@ export async function enqueueRun(input: {
 
   const { error } = await supabaseAdmin()
     .from('agent_runs')
-    .insert({ id: runId, project_id: projectId, user_id: userId, prompt, status: 'queued' })
+    .insert({
+      id: runId,
+      project_id: projectId,
+      user_id: userId,
+      prompt,
+      status: 'queued',
+      attachments: attachments.map((a) => a.id),
+    })
   if (error) {
     if (error.code === '23505') {
       throw new AppError(
@@ -106,7 +143,7 @@ export async function enqueueRun(input: {
     throw error
   }
   try {
-    await appendUserMessage(projectId, prompt)
+    await appendUserMessage(projectId, prompt, attachments)
   } catch (err) {
     await supabaseAdmin().from('agent_runs').delete().eq('id', runId)
     throw err
@@ -239,17 +276,73 @@ function agentStream(
         strategy: composeStrategies(
           clearToolResults({ keepRecentToolResults: 6 }),
           summarizeOldest({
-            summarize: conversationSummarizer({ adapter }),
+            summarize: summarizeWithoutMedia(adapter),
             keepRecentTokens: Math.floor(env.AGENT_CONTEXT_TOKENS / 3),
           }),
         ),
         continueOnError: true,
       }),
+      attachmentsMiddleware(session),
       visionMiddleware(session),
       progressSaverMiddleware(row.project_id),
       loggingMiddleware(runLog),
     ],
   })
+}
+
+/**
+ * Copies this run's attachments into the project and loads the project's upload index (used to
+ * describe "sf-upload:" references) plus this run's images (shown to the model once).
+ */
+async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
+  let uploads = await projectUploads(row.project_id)
+  const mine = (row.attachments ?? [])
+    .map((id) => uploads.get(id))
+    .filter((u): u is UploadRow => Boolean(u))
+  if (mine.length) {
+    const copied = await copyUploadsIntoProject(session, mine, (bytes, upload) =>
+      optimizeImage(session, bytes, upload.mime),
+    )
+    uploads = await projectUploads(row.project_id)
+    for (const upload of copied) {
+      if (upload.kind !== 'image' || upload.mime === 'image/svg+xml') continue
+      const bytes = await downloadUpload(upload)
+      if (bytes.byteLength <= 5_000_000) {
+        session.attachedImages.set(upload.id, {
+          mime: upload.mime,
+          base64: bytes.toString('base64'),
+        })
+      }
+    }
+    logger.info('Attachments copied into the project', {
+      event: 'agent.attachments',
+      runId: row.id,
+      projectId: row.project_id,
+      files: copied.map((u) => u.project_path),
+    })
+  }
+  session.uploads = new Map(
+    [...uploads].map(([id, u]) => [
+      id,
+      { name: u.name, kind: u.kind, mime: u.mime, project_path: u.project_path },
+    ]),
+  )
+}
+
+/** Compaction summaries are text-only: attachment references become plain notes first. */
+function summarizeWithoutMedia(
+  adapter: Parameters<typeof conversationSummarizer>[0]['adapter'],
+): Summarizer {
+  const summarize = conversationSummarizer({ adapter })
+  return (messages, input) =>
+    summarize(
+      stripAttachments(messages, () => '[attachment]').map((m) =>
+        Array.isArray(m.content)
+          ? { ...m, content: m.content.filter((p) => p.type === 'text') }
+          : m,
+      ),
+      input,
+    )
 }
 
 /** Drives one run to completion in this process. Safe to call twice (second call is a no-op). */
@@ -289,6 +382,7 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
 
     await ensureRepo(session)
     await restartDevServer(session, { force: false })
+    await prepareAttachments(session, row)
     if (!row.checkpoint_before) {
       const before = await commitAll(session, `Before: ${row.prompt}`)
       await updateRun(runId, { checkpoint_before: before })
