@@ -123,7 +123,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     'grid h-9 w-9 shrink-0 place-items-center rounded-full text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink'
 
   return (
-    <div className="flex h-dvh min-h-0 bg-sidebar pt-[env(safe-area-inset-top)] text-ink md:p-2 md:pl-0">
+    <div className="relative flex h-dvh min-h-0 overflow-clip bg-sidebar pt-[env(safe-area-inset-top)] text-ink md:p-2 md:pl-0">
       <div
         className={cn(
           'min-h-0 w-full flex-col md:w-[360px] md:shrink-0',

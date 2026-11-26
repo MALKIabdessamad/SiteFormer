@@ -96,11 +96,12 @@ export function AgentChat({
     input.style.height = `${Math.min(input.scrollHeight, 200)}px`
   }, [draft])
 
-  // Follow new output unless the user scrolled up to read.
+  // Follow new output (and the reply's action row once its run settles) unless the user
+  // scrolled up to read.
   useEffect(() => {
     const list = listRef.current
     if (list && stickToBottom.current) list.scrollTop = list.scrollHeight
-  }, [chat.messages])
+  }, [chat.messages, runs])
 
   const send = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -148,7 +149,7 @@ export function AgentChat({
           const el = e.currentTarget
           stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
         }}
-        className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4"
+        className="relative min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4"
         aria-live="polite"
       >
         {chat.isHydrating && turns.length === 0 && (

@@ -214,7 +214,7 @@ export function CodePanel({
         <ul
           role="tree"
           aria-label="Files"
-          className="min-h-0 flex-1 overflow-y-auto py-1.5 text-[13px]"
+          className="relative min-h-0 flex-1 overflow-y-auto py-1.5 text-[13px]"
         >
           {tree.map((node) => (
             <TreeRow
