@@ -27,8 +27,8 @@ export function mediaTools(session: SandboxSession) {
     name: 'generate_image',
     description:
       'Generate a photo/illustration with AI and save it in public/images/. Costs real money ' +
-      '(~$0.03) and is limited per run. ONLY when the user asks for images/photos, or the page ' +
-      'clearly needs a photo (hero, product, blog cover) and the user attached none. NEVER for ' +
+      '(~$0.03) and is limited per run. ONLY when the user explicitly asks for images/photos ' +
+      '(otherwise use a styled placeholder and offer to generate in your reply). NEVER for ' +
       'logos, icons, UI elements, patterns or text (use SVG/CSS), never as filler, never to ' +
       'replace an image the user attached. Write a specific prompt (subject, style, lighting, ' +
       'composition, "no text").',

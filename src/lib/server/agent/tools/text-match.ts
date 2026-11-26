@@ -8,7 +8,8 @@
 export type Match = { start: number; end: number; strategy: string }
 
 export type MatchResult =
-  | { ok: true; matches: Array<Match> }
+  /** `newText`: a repair to apply to the edit's newText too (same slip as in oldText). */
+  | { ok: true; matches: Array<Match>; newText?: (s: string) => string }
   | { ok: false; reason: 'not_found' | 'ambiguous'; count?: number; hint?: string }
 
 function allIndexes(haystack: string, needle: string): Array<number> {
@@ -37,6 +38,13 @@ const canonical = (s: string) =>
     .replace(/["'`\u2018\u2019\u201c\u201d]/g, '"')
     .replace(/[\u2013\u2014]/g, '-')
     .replace(/\u00a0/g, ' ')
+
+/**
+ * A slip seen with some models: JSX attribute quotes rewritten as braces with spaces,
+ * className="a b" → className={ a b }. Prettier never writes `={ … }` with inner spaces around a
+ * plain class list, so this pattern is safe to turn back into quotes (in oldText AND newText).
+ */
+const restoreAttributeQuotes = (s: string) => s.replace(/=\{ ([^{}\n"'`]*?) \}/g, '="$1"')
 
 /** Line-window match ignoring leading/trailing whitespace on each line. */
 function lineMatches(text: string, oldText: string): Array<Match> {
@@ -89,7 +97,9 @@ function closestLine(text: string, oldText: string): string | undefined {
     const score = tokens.filter((t) => c.includes(t)).length
     if (score > 0 && (!best || score > best.score)) best = { score, line: line.trim(), n: i + 1 }
   })
-  return best ? `Closest line ${best.n}: ${best.line.slice(0, 200)}` : undefined
+  return best
+    ? `Closest line ${best.n} (read_file lines ${Math.max(1, best.n - 3)}-${best.n + 3} and copy from there): ${best.line.slice(0, 200)}`
+    : undefined
 }
 
 export function findMatches(text: string, oldText: string, replaceAll: boolean): MatchResult {
@@ -125,6 +135,18 @@ export function findMatches(text: string, oldText: string, replaceAll: boolean):
     const hits = lineMatches(text, candidate)
     if (hits.length === 1) return { ok: true, matches: hits }
     if (hits.length > 1) return { ok: false, reason: 'ambiguous', count: hits.length }
+  }
+  for (const candidate of new Set([oldText, unescaped])) {
+    const restored = restoreAttributeQuotes(candidate)
+    if (restored === candidate) continue
+    const retry = findMatches(text, restored, replaceAll)
+    if (retry.ok) {
+      return {
+        ok: true,
+        matches: retry.matches.map((m) => ({ ...m, strategy: 'attribute quotes' })),
+        newText: restoreAttributeQuotes,
+      }
+    }
   }
   return { ok: false, reason: 'not_found', hint: closestLine(text, unescaped) }
 }

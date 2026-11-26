@@ -35,6 +35,8 @@ export type SandboxSession = {
   >
   /** Images attached to THIS run's message, shown to the model on every call of the run. */
   attachedImages: Map<string, { mime: string; base64: string }>
+  /** Project paths read with read_file in this run (edit_file failure hints). */
+  readPaths: Set<string>
 }
 
 /** Creates a session with fresh per-run bookkeeping. */
@@ -54,6 +56,7 @@ export function createSession(
     usage: { imagesGenerated: 0, webSearches: 0, imageViews: 0 },
     uploads: new Map(),
     attachedImages: new Map(),
+    readPaths: new Set(),
   }
 }
 

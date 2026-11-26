@@ -52,7 +52,7 @@ export function fileTools(session: SandboxSession) {
 
   const readFile = toolDefinition({
     name: 'read_file',
-    description: `Read a text file with line numbers. Returns at most ${READ_MAX_LINES} lines per call; pass startLine to read further.`,
+    description: `Read a text file. Each line is shown as "<number>│<text>"; the text after │ is the exact file content. At most ${READ_MAX_LINES} lines per call; pass startLine/endLine to read a range.`,
     inputSchema: z.object({
       path: z.string(),
       startLine: z.number().int().min(1).optional().describe('Default 1.'),
@@ -71,12 +71,12 @@ export function fileTools(session: SandboxSession) {
       .slice(startLine - 1, end)
       .map((line, i) => `${String(startLine + i).padStart(width)}│${line}`)
       .join('\n')
-    return {
-      path: relativePath(sitePath(path)),
-      totalLines: lines.length,
-      ...(end < lines.length ? { more: `Lines ${end + 1}-${lines.length} not shown` } : {}),
-      content: capText(body, 40_000),
-    }
+    const rel = relativePath(sitePath(path))
+    session.readPaths.add(rel)
+    // Plain text, not JSON: inside a JSON result every quote would arrive escaped (\"), and
+    // models then mangle quotes when copying lines into edit_file.
+    const more = end < lines.length ? ` (lines ${end + 1}-${lines.length} not shown)` : ''
+    return `${rel} · lines ${startLine}-${end} of ${lines.length}${more}\n${capText(body, 40_000)}`
   })
 
   const searchCode = toolDefinition({
@@ -98,12 +98,15 @@ export function fileTools(session: SandboxSession) {
       { timeoutSeconds: 30 },
     )
     const matches = result.stdout.split('\n').filter(Boolean)
-    return {
-      matches: matches.slice(0, SEARCH_MAX).map((m) => capText(m, 300)),
-      ...(matches.length > SEARCH_MAX
-        ? { truncated: 'More matches exist; narrow the search.' }
-        : {}),
-    }
+    if (matches.length === 0) return 'No matches.'
+    // Plain text "path:line:content" (see read_file for why not JSON).
+    return (
+      matches
+        .slice(0, SEARCH_MAX)
+        .map((m) => capText(m, 300))
+        .join('\n') +
+      (matches.length > SEARCH_MAX ? '\n(More matches exist; narrow the search.)' : '')
+    )
   })
 
   const writeFile = toolDefinition({
@@ -120,9 +123,11 @@ export function fileTools(session: SandboxSession) {
   const editFile = toolDefinition({
     name: 'edit_file',
     description:
-      'Edit a file by find/replace. Copy oldText exactly from read_file (without the line-number ' +
-      'prefix); it must match exactly once (include surrounding lines to be unique) unless ' +
-      'replaceAll is true. Edits apply in order; if any fails, nothing is written.',
+      'Edit a file by find/replace. read_file the lines first (in this run), then copy oldText ' +
+      'character for character from the text after "│" (same quotes, e.g. className="…"). It ' +
+      'must match exactly once (include surrounding lines to be unique) unless replaceAll is ' +
+      'true. Edits apply in order; edits that match are saved even if another one fails (the ' +
+      'result lists failures to retry).',
     inputSchema: z.object({
       path: z.string(),
       edits: z
@@ -138,26 +143,43 @@ export function fileTools(session: SandboxSession) {
     }),
   }).server(async ({ path, edits }) => {
     const absolute = sitePath(path)
+    const where = relativePath(absolute)
     let text = await readText(session, absolute)
+    // Leftover JSON escaping in newText (\" instead of "): undo it, unless the file itself
+    // uses \" somewhere (then it may be intended).
+    const fileHasEscapes = /\\["']/.test(text)
+    const cleanNewText = (s: string) => (fileHasEscapes ? s : s.replace(/\\(["'])/g, '$1'))
     const fuzzy: Array<string> = []
+    const failed: Array<string> = []
     for (const [i, edit] of edits.entries()) {
       const result = findMatches(text, edit.oldText, edit.replaceAll ?? false)
       if (!result.ok) {
-        const where = relativePath(absolute)
-        throw new ToolError(
+        failed.push(
           result.reason === 'ambiguous'
-            ? `Edit ${i + 1}: oldText matches ${result.count} places in ${where}. Include more surrounding lines, or set replaceAll.`
-            : `Edit ${i + 1}: oldText not found in ${where}. Copy it exactly from read_file (without the line-number prefix).${result.hint ? ` ${result.hint}` : ''}`,
+            ? `Edit ${i + 1}: oldText matches ${result.count} places. Include more surrounding lines, or set replaceAll.`
+            : `Edit ${i + 1}: oldText not found.${result.hint ? ` ${result.hint}` : ''}`,
         )
+        continue
       }
       const strategy = result.matches[0]!.strategy
       if (strategy !== 'exact') fuzzy.push(`edit ${i + 1} matched ignoring ${strategy}`)
-      text = applyMatches(text, result.matches, edit.newText)
+      const newText = cleanNewText(edit.newText)
+      if (newText !== edit.newText) fuzzy.push(`edit ${i + 1}: removed stray \\ before quotes`)
+      text = applyMatches(text, result.matches, result.newText?.(newText) ?? newText)
     }
-    await writeText(session, absolute, text)
+    const applied = edits.length - failed.length
+    if (applied > 0) await writeText(session, absolute, text)
+    if (failed.length) {
+      const advice = session.readPaths.has(where)
+        ? `Copy oldText exactly from the text after "│" in read_file (keep the file's quotes).`
+        : `You have not read ${where} in this run: your oldText is probably from an older version. read_file it, then retry the failed edits.`
+      const summary = `${applied ? `${applied} of ${edits.length} edits applied and saved; ` : 'No edits applied; '}failed: ${failed.join(' ')} ${advice}`
+      if (applied === 0) throw new ToolError(summary)
+      return { path: where, editsApplied: applied, error: summary, lines: lineCount(text) }
+    }
     return {
-      path: relativePath(absolute),
-      editsApplied: edits.length,
+      path: where,
+      editsApplied: applied,
       lines: lineCount(text),
       ...(fuzzy.length ? { note: fuzzy.join('; ') } : {}),
     }

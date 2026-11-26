@@ -34,7 +34,11 @@ function memoryTools(scope: MemoryScope): Array<Tool> {
       'project fact ("brand colour is #1f6f43"), or a decision ("checkout uses Stripe"). Only ' +
       'things worth knowing next time; never secrets or one-off details.',
     inputSchema: z.object({
-      content: z.string().min(3).max(300).describe('One short, self-contained sentence.'),
+      content: z
+        .string()
+        .min(3)
+        .max(500)
+        .describe('One self-contained fact, max 500 characters. Save separate facts separately.'),
       kind: z.enum(['fact', 'preference', 'decision']),
       scope: z
         .enum(['project', 'user'])
