@@ -170,14 +170,20 @@ needs them.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `projects`                  | `id`, `user_id`, `name`, `prompt`, `status` (`provisioning` · `ready` · `failed`), `sandbox_id`, `preview_url`, `error`, timestamps                                                        |
 | `agent_runs`                | One per user message (the queue): `prompt`, `status` (`queued` → `running` → `completed`/`failed`/`aborted`), `checkpoint_before`/`after`, `files_changed`, `record` (usage, cost, errors) |
-| `agent_threads`             | The transcript, one row per project (server-only)                                                                                                                                          |
-| `agent_metadata`            | Compaction checkpoints (server-only)                                                                                                                                                       |
+| `agent_messages`            | The transcript, one row per message; a save writes only new/changed rows (server-only)                                                                                                     |
+| `agent_metadata`            | Compaction checkpoints, removed with the project (server-only)                                                                                                                             |
 | `agent_memories`            | What the agent remembers (`project_id` null = user-wide preference)                                                                                                                        |
-| Storage `agent-screenshots` | Private bucket; owners read via signed URLs                                                                                                                                                |
+| `agent_uploads`             | Files attached in the composer: `run_id` (null = not sent yet), `project_path` once copied into the project                                                                                |
+| Storage `agent-screenshots` | Private; screenshots + generated-image copies of the newest 20 runs per project                                                                                                            |
+| Storage `agent-uploads`     | Private; attached files. Owners read via signed URLs                                                                                                                                       |
 
 RLS: browsers can only `select` their own `projects`, `agent_runs`, `agent_memories` and
 `agent_uploads` (and read their own files in the private storage buckets); the
 transcript and metadata are server-only; all writes go through the server (secret key).
+
+**Cleanup** (`src/lib/server/maintenance.server.ts`, 2 minutes after boot and every 6 hours):
+deletes Agent37 sandboxes and storage folders whose project no longer exists (e.g. after an
+account is deleted in Supabase) and uploads that were attached but never sent within a day.
 `projects` and `agent_runs` are in the `supabase_realtime` publication.
 
 ## Deploy to Railway

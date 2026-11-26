@@ -2,7 +2,7 @@
  * Files users attach in the chat (logos, photos, blog copy…).
  *
  *   browser ──POST /api/uploads──▶ validate (owner, size, REAL type from bytes) ──▶ Storage
- *   message ──parts "sf-upload:<id>"──▶ run.attachments ──run start──▶ copied into the sandbox
+ *   message ──parts "sf-upload:<id>"──▶ agent_uploads.run_id ──run start──▶ copied into the sandbox
  *     images     → public/uploads/<name>   (large photos optimized to WebP)
  *     documents  → content/uploads/<name>
  *
@@ -38,6 +38,9 @@ export type UploadRow = {
   mime: string
   size: number
   project_path: string | null
+  /** The run this upload was sent with (null = attached but not sent yet). */
+  run_id: string | null
+  created_at: string
 }
 
 type Detected = { kind: UploadKind; mime: string; ext: string }
@@ -275,19 +278,40 @@ export async function copyUploadsIntoProject(
   return out
 }
 
+/** Marks uploads as sent with a run (the run copies them into the project when it starts). */
+export async function attachUploads(runId: string, uploads: Array<UploadRow>): Promise<void> {
+  const { error } = await supabaseAdmin()
+    .from('agent_uploads')
+    .update({ run_id: runId })
+    .in(
+      'id',
+      uploads.map((u) => u.id),
+    )
+  if (error) throw error
+}
+
+async function removePaths(paths: Array<string>): Promise<void> {
+  for (let i = 0; i < paths.length; i += 100) {
+    const { error } = await supabaseAdmin()
+      .storage.from(UPLOAD_BUCKET)
+      .remove(paths.slice(i, i + 100))
+    if (error) throw error
+  }
+}
+
 /** Removes every uploaded file of a project from Storage (database rows cascade). */
 export async function removeProjectUploads(projectId: string): Promise<number> {
   try {
-    const { data, error } = await supabaseAdmin()
-      .storage.from(UPLOAD_BUCKET)
-      .list(projectId, { limit: 1000 })
-    if (error) throw error
-    const paths = (data ?? []).filter((f) => f.id !== null).map((f) => `${projectId}/${f.name}`)
-    for (let i = 0; i < paths.length; i += 100) {
-      await supabaseAdmin()
+    const paths: Array<string> = []
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabaseAdmin()
         .storage.from(UPLOAD_BUCKET)
-        .remove(paths.slice(i, i + 100))
+        .list(projectId, { limit: 1000, offset })
+      if (error) throw error
+      paths.push(...(data ?? []).filter((f) => f.id !== null).map((f) => `${projectId}/${f.name}`))
+      if (!data || data.length < 1000) break
     }
+    await removePaths(paths)
     return paths.length
   } catch (error) {
     log.error('Removing project uploads failed', {
@@ -297,4 +321,28 @@ export async function removeProjectUploads(projectId: string): Promise<number> {
     })
     return 0
   }
+}
+
+/** Deletes uploads that were attached but never sent with a message, older than `maxAgeMs`. */
+export async function removeUnsentUploads(maxAgeMs: number): Promise<number> {
+  const before = new Date(Date.now() - maxAgeMs).toISOString()
+  const { data, error } = await supabaseAdmin()
+    .from('agent_uploads')
+    .select('id, storage_path')
+    .is('run_id', null)
+    .lt('created_at', before)
+    .limit(500)
+    .returns<Array<{ id: string; storage_path: string }>>()
+  if (error) throw error
+  if (!data?.length) return 0
+  await removePaths(data.map((row) => row.storage_path))
+  const { error: deleteError } = await supabaseAdmin()
+    .from('agent_uploads')
+    .delete()
+    .in(
+      'id',
+      data.map((row) => row.id),
+    )
+  if (deleteError) throw deleteError
+  return data.length
 }

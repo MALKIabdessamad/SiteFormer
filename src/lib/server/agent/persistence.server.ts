@@ -1,9 +1,10 @@
 /**
  * TanStack AI persistence backed by Supabase (secret key, server only).
  *
- *   messages → agent_threads   one row per project (threadId = project id), full replace
+ *   messages → agent_messages  one row per message (threadId = project id); a save writes only
+ *                              new or changed rows (content hash per position)
  *   runs     → agent_runs      one row per user message; created by the app (queue), driven here
- *   metadata → agent_metadata  compaction checkpoints
+ *   metadata → agent_metadata  compaction checkpoints (removed with the project)
  *
  * Interrupts (human approval of tool calls) are not used, so that store is not implemented.
  */
@@ -15,6 +16,7 @@ import {
   type RunStatus,
 } from '@tanstack/ai-persistence'
 import type { MetadataStore, ModelMessage } from '@tanstack/ai'
+import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '../supabase-admin.server'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -32,8 +34,6 @@ export type AgentRunRow = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
-  /** Upload ids attached to this run's message. */
-  attachments: Array<string>
   record: Partial<RunRecord>
   created_at: string
   started_at: string | null
@@ -76,26 +76,99 @@ async function getRunRow(runId: string): Promise<AgentRunRow | null> {
   return data
 }
 
+/** JSON with sorted keys: jsonb reorders keys, so plain JSON.stringify would not be stable. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+const hashOf = (message: ModelMessage) =>
+  createHash('sha1').update(canonical(message)).digest('hex')
+
+/** Rows are written in batches so one request never carries a huge body. */
+const WRITE_BATCH = 50
+
 const messages = {
   async loadThread(threadId: string): Promise<Array<ModelMessage>> {
     if (!UUID.test(threadId)) return []
-    const { data, error } = await supabaseAdmin()
-      .from('agent_threads')
-      .select('messages')
-      .eq('project_id', threadId)
-      .maybeSingle<{ messages: Array<ModelMessage> }>()
-    if (error) throw error
-    return data?.messages ?? []
+    const out: Array<ModelMessage> = []
+    // PostgREST caps a response at 1000 rows: page through long transcripts.
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabaseAdmin()
+        .from('agent_messages')
+        .select('message')
+        .eq('project_id', threadId)
+        .order('position', { ascending: true })
+        .range(from, from + 999)
+        .returns<Array<{ message: ModelMessage }>>()
+      if (error) throw error
+      out.push(...(data ?? []).map((row) => row.message))
+      if (!data || data.length < 1000) break
+    }
+    if (out.length) return out
+    return legacyThread(threadId)
   },
 
-  /** Full replace (merging by id is withPersistence's job, not the store's). */
+  /**
+   * Makes the stored transcript equal `list`: upserts positions that are new or whose content
+   * changed, deletes positions past the end. Normally that is just the newest messages.
+   */
   async saveThread(threadId: string, list: Array<ModelMessage>): Promise<void> {
     if (!UUID.test(threadId)) throw new Error(`Invalid thread id: ${threadId}`)
-    const { error } = await supabaseAdmin()
-      .from('agent_threads')
-      .upsert({ project_id: threadId, messages: list }, { onConflict: 'project_id' })
-    if (error) throw error
+    const db = supabaseAdmin()
+    const stored = new Map<number, string>()
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db
+        .from('agent_messages')
+        .select('position, hash')
+        .eq('project_id', threadId)
+        .order('position', { ascending: true })
+        .range(from, from + 999)
+        .returns<Array<{ position: number; hash: string }>>()
+      if (error) throw error
+      for (const row of data ?? []) stored.set(row.position, row.hash)
+      if (!data || data.length < 1000) break
+    }
+    const changed = list
+      .map((message, position) => ({ message, position, hash: hashOf(message) }))
+      .filter((row) => stored.get(row.position) !== row.hash)
+    for (let i = 0; i < changed.length; i += WRITE_BATCH) {
+      const { error } = await db.from('agent_messages').upsert(
+        changed.slice(i, i + WRITE_BATCH).map((row) => ({ project_id: threadId, ...row })),
+        { onConflict: 'project_id,position' },
+      )
+      if (error) throw error
+    }
+    if ([...stored.keys()].some((position) => position >= list.length)) {
+      const { error } = await db
+        .from('agent_messages')
+        .delete()
+        .eq('project_id', threadId)
+        .gte('position', list.length)
+      if (error) throw error
+    }
   },
+}
+
+/**
+ * Transition only (until migration 20261126000009 drops agent_threads): a project whose
+ * transcript is still in the old one-blob table. The first save moves it to agent_messages.
+ */
+async function legacyThread(threadId: string): Promise<Array<ModelMessage>> {
+  const { data, error } = await supabaseAdmin()
+    .from('agent_threads')
+    .select('messages')
+    .eq('project_id', threadId)
+    .maybeSingle<{ messages: Array<ModelMessage> }>()
+  if (error) return [] // table already dropped
+  return data?.messages ?? []
 }
 
 const runs = defineRunStore({
@@ -182,7 +255,11 @@ const metadata: MetadataStore = {
   async set(namespace, key, value) {
     const { error } = await supabaseAdmin()
       .from('agent_metadata')
-      .upsert({ namespace, key, value }, { onConflict: 'namespace,key' })
+      // Keys are thread (= project) ids: the foreign key removes them with the project.
+      .upsert(
+        { namespace, key, value, project_id: UUID.test(key) ? key : null },
+        { onConflict: 'namespace,key' },
+      )
     if (error) throw error
   },
   async delete(namespace, key) {

@@ -44,8 +44,10 @@ import {
   stripAttachments,
   visionMiddleware,
 } from './middleware.server'
+import { pruneProjectScreenshots } from './screenshots.server'
 import { optimizeImage } from './tools/browser.server'
 import {
+  attachUploads,
   copyUploadsIntoProject,
   downloadUpload,
   projectUploads,
@@ -123,16 +125,13 @@ export async function enqueueRun(input: {
     return { runId } // retried request: already queued
   }
 
-  const { error } = await supabaseAdmin()
-    .from('agent_runs')
-    .insert({
-      id: runId,
-      project_id: projectId,
-      user_id: userId,
-      prompt,
-      status: 'queued',
-      attachments: attachments.map((a) => a.id),
-    })
+  const { error } = await supabaseAdmin().from('agent_runs').insert({
+    id: runId,
+    project_id: projectId,
+    user_id: userId,
+    prompt,
+    status: 'queued',
+  })
   if (error) {
     if (error.code === '23505') {
       throw new AppError(
@@ -143,6 +142,7 @@ export async function enqueueRun(input: {
     throw error
   }
   try {
+    if (attachments.length) await attachUploads(runId, attachments)
     await appendUserMessage(projectId, prompt, attachments)
   } catch (err) {
     await supabaseAdmin().from('agent_runs').delete().eq('id', runId)
@@ -296,9 +296,9 @@ function agentStream(
  */
 async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
   let uploads = await projectUploads(row.project_id)
-  const mine = (row.attachments ?? [])
-    .map((id) => uploads.get(id))
-    .filter((u): u is UploadRow => Boolean(u))
+  const mine = [...uploads.values()]
+    .filter((u) => u.run_id === row.id)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
   if (mine.length) {
     const copied = await copyUploadsIntoProject(session, mine, (bytes, upload) =>
       optimizeImage(session, bytes, upload.mime),
@@ -456,6 +456,7 @@ async function finalize(runId: string, session: SandboxSession | null, row: Agen
   }
   if (current && !current.finished_at) patch.finished_at = new Date().toISOString()
   if (Object.keys(patch).length) await updateRun(runId, patch)
+  void pruneProjectScreenshots(row.project_id)
 }
 
 /** Stops a run (the owner pressed Stop). Changes made so far are checkpointed. */

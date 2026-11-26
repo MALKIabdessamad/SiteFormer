@@ -7,6 +7,7 @@ import { serverEnv } from '../env.server'
  * - POST   /v1/instances               → instance, `status: "running"` within ~1s,
  *                                         `public_ports[].url` already assigned
  * - GET    /v1/instances/{id}          → instance (404 `not_found` once deleted)
+ * - GET    /v1/instances               → `{ data: Instance[] }`
  * - DELETE /v1/instances/{id}          → `{ id, deleted: true }`
  * - POST   /v1/instances/{id}/public-ports
  * - POST   https://sandbox.agent37.app/v1/instances/{id}/exec  (header `X-Agent37-Key`)
@@ -134,6 +135,15 @@ export async function getInstance(id: string): Promise<Instance | null> {
   })
   if (response.status === 404) return null
   return (await ensureOk(response, 'get sandbox')).json() as Promise<Instance>
+}
+
+/** Every instance of this Agent37 account. */
+export async function listInstances(): Promise<Array<Instance>> {
+  const response = await request(`${API_URL}/instances`, { headers: apiHeaders(), retries: 2 })
+  const body = (await (await ensureOk(response, 'list sandboxes')).json()) as {
+    data?: Array<Instance>
+  }
+  return body.data ?? []
 }
 
 /** Deletes a sandbox. Already gone counts as success. */

@@ -26,7 +26,7 @@ export function ScreenshotImage({
     const hit = cache.get(`${bucket}/${path}`)
     return hit && hit.expires > Date.now() ? hit.url : null
   })
-  const [failed, setFailed] = useState(false)
+  const [failed, setFailed] = useState<false | 'expired' | 'error'>(false)
 
   useEffect(() => {
     if (url) return
@@ -37,11 +37,13 @@ export function ScreenshotImage({
       .then(({ data, error }) => {
         if (!live) return
         if (error || !data) {
+          // Screenshots of older runs are cleared to save storage: not an error.
+          if (/not found/i.test(error?.message ?? '')) return setFailed('expired')
           reportClientError('screenshot', 'Could not sign screenshot URL', {
             detail: `${path}: ${error?.message ?? 'no data'}`,
             projectId: path.split('/')[0],
           })
-          return setFailed(true)
+          return setFailed('error')
         }
         cache.set(`${bucket}/${path}`, {
           url: data.signedUrl,
@@ -57,7 +59,8 @@ export function ScreenshotImage({
   if (failed) {
     return (
       <div className="mt-2 flex h-24 items-center justify-center gap-2 rounded-xl border text-xs text-faint">
-        <ImageOff className="h-4 w-4" aria-hidden /> Image unavailable
+        <ImageOff className="h-4 w-4" aria-hidden />{' '}
+        {failed === 'expired' ? 'Older image (cleared)' : 'Image unavailable'}
       </div>
     )
   }
@@ -72,7 +75,7 @@ export function ScreenshotImage({
               detail: path,
               projectId: path.split('/')[0],
             })
-            setFailed(true)
+            setFailed('error')
           }}
           loading="lazy"
           className={className}

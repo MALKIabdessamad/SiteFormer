@@ -174,3 +174,34 @@ void Promise.resolve(
     }),
   )
 process.on('SIGINT', () => void shutdown('SIGINT'))
+
+// Cleanup of orphaned sandboxes/files and unsent uploads (see maintenance.server.ts): shortly
+// after boot, then every 6 hours.
+const MAINTENANCE_EVERY_MS = 6 * 60 * 60 * 1000
+function maintenance() {
+  if (stopping) return
+  void Promise.resolve(
+    app.fetch(
+      new Request(`http://localhost:${PORT}/api/agent?action=maintenance`, {
+        method: 'POST',
+        headers: { 'x-siteformer-internal': process.env.SITEFORMER_INTERNAL_TOKEN! },
+      }),
+    ),
+  )
+    .then(async (res) => {
+      if (!res.ok)
+        log('error', 'Maintenance request failed', {
+          event: 'maintenance.request_failed',
+          status: res.status,
+          result: await res.text(),
+        })
+    })
+    .catch((err) =>
+      log('error', 'Maintenance request failed', {
+        event: 'maintenance.request_failed',
+        error: String(err),
+      }),
+    )
+}
+setTimeout(maintenance, 2 * 60 * 1000).unref()
+setInterval(maintenance, MAINTENANCE_EVERY_MS).unref()

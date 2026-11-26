@@ -3,6 +3,7 @@ import {
   errorResponse,
   getAgent,
   postCancel,
+  postMaintenance,
   postMessage,
   postRecover,
 } from '~/lib/server/agent/http.server'
@@ -22,6 +23,7 @@ export const Route = createFileRoute('/api/agent')({
           const action = new URL(request.url).searchParams.get('action')
           if (action === 'cancel') return await postCancel(request)
           if (action === 'recover') return await postRecover(request)
+          if (action === 'maintenance') return await postMaintenance(request)
           return await postMessage(request)
         } catch (error) {
           return errorResponse(error)

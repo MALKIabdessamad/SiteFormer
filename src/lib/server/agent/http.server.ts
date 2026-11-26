@@ -15,6 +15,7 @@ import { reconstructChat } from '@tanstack/ai-persistence'
 import { AppError } from '../app-error'
 import { authenticate } from '../auth.server'
 import { ConfigError } from '../env.server'
+import { runMaintenance } from '../maintenance.server'
 import { ownedProject } from '../projects.server'
 import { getRunRow, persistence } from './persistence.server'
 import { cancelRun, enqueueRun, isValidRunId, recoverRuns } from './runner.server'
@@ -166,13 +167,23 @@ export async function postCancel(request: Request): Promise<Response> {
   return Response.json({ ok: true })
 }
 
-/** POST /api/agent?action=recover  (internal: called by server.ts at boot with a per-process token) */
-export async function postRecover(request: Request): Promise<Response> {
+function requireInternal(request: Request) {
   const token = process.env.SITEFORMER_INTERNAL_TOKEN
   if (!token || request.headers.get('x-siteformer-internal') !== token) {
     throw new AppError('Not found.', 'not_found')
   }
+}
+
+/** POST /api/agent?action=recover  (internal: called by server.ts at boot with a per-process token) */
+export async function postRecover(request: Request): Promise<Response> {
+  requireInternal(request)
   return Response.json({ resumed: await recoverRuns() })
+}
+
+/** POST /api/agent?action=maintenance  (internal: called by server.ts periodically) */
+export async function postMaintenance(request: Request): Promise<Response> {
+  requireInternal(request)
+  return Response.json(await runMaintenance())
 }
 
 const uploadHits = new Map<string, Array<number>>()
