@@ -4,6 +4,7 @@
  * as a new commit, so a restore can itself be undone.
  */
 import { capText, sh, shellQuote, type SandboxSession } from './sandbox-session.server'
+import { editorInstallScript } from '../sandbox/editor/install'
 import { restartDevServer } from './tools/shell.server'
 
 const SHA = /^[0-9a-f]{7,40}$/
@@ -80,6 +81,8 @@ export async function restoreCheckpoint(session: SandboxSession, sha: string): P
   if (result.exitCode !== 0 || !SHA.test(head)) {
     throw new Error(`Restore failed: ${capText(result.stderr || result.stdout, 400)}`)
   }
+  // An old checkpoint may predate the editor bridge (or hold an older version of it).
+  await sh(session, editorInstallScript(), { timeoutSeconds: 60 })
   await restartDevServer(session)
   return head
 }

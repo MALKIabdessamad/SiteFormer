@@ -3,7 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { MessageSquare, PanelLeftOpen } from 'lucide-react'
 import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
-import { isSettledRun, useAgentRuns } from '~/features/agent'
+import { isSettledRun, useAgentRuns, useComposer, type SendOptions } from '~/features/agent'
 import { useRedirectOnSignOut } from '~/features/auth'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
@@ -25,6 +25,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const { runs, activeRun, refresh: refreshRuns } = useAgentRuns(projectId)
   const [chatKey, setChatKey] = useState(0)
   const [previewKey, setPreviewKey] = useState(0)
+  const composer = useComposer()
 
   useRedirectOnSignOut()
 
@@ -41,6 +42,21 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const afterSave = useCallback(() => {
     setChatKey((k) => k + 1) // show the "you edited" note
   }, [])
+  // Visual edits note themselves in the chat; reload it once they pause (not on every click).
+  const editPause = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const afterVisualEdit = useCallback(() => {
+    clearTimeout(editPause.current)
+    editPause.current = setTimeout(() => setChatKey((k) => k + 1), 2500)
+  }, [])
+  useEffect(() => () => clearTimeout(editPause.current), [])
+
+  // The preview tools talk to the AI through the chat (shown, so the user sees it go).
+  const ask = (text: string, options?: SendOptions) => {
+    setMobileView('chat')
+    setChatCollapsed(false)
+    void composer.send(text, options)
+  }
+
   const afterRestore = useCallback(() => {
     setChatKey((k) => k + 1) // show the restore note
     setPreviewKey((k) => k + 1)
@@ -145,6 +161,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           onActivity={refreshRuns}
           onBusyChange={setChatBusy}
           onProjectChanged={refresh}
+          composer={composer}
         />
       </div>
       <div
@@ -160,6 +177,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           retrying={busy === 'retry'}
           onRetry={() => void retry()}
           onSaved={afterSave}
+          composer={composer}
+          onAsk={ask}
+          onVisualEdit={afterVisualEdit}
           chatToggle={
             <>
               <button

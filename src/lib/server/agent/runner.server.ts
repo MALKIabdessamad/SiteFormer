@@ -37,7 +37,8 @@ import { serverEnv } from '../env.server'
 import { getProject, provisionTarget } from '../projects.server'
 import { ensureProvisioned, isBusy } from '../sandbox/provision.server'
 import { supabaseAdmin } from '../supabase-admin.server'
-import { requireCredits } from '../billing/credits.server'
+import { chargeTokens, requireCredits } from '../billing/credits.server'
+import { suggestNextSteps } from '../ai/suggestions.server'
 import { commitAll, ensureRepo, filesChanged } from './checkpoints.server'
 import { supabaseMemory } from './memory.server'
 import {
@@ -548,6 +549,7 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
       })
       .then(async () => {
         const done = await getRunRow(runId)
+        if (done?.status === 'completed' && !noCredits) void offerNextSteps(done)
         const usage = (done?.record as { usage?: Record<string, unknown> } | undefined)?.usage
         const details = usage?.promptTokensDetails as { cachedTokens?: number } | undefined
         runLog.info('Agent run finished', {
@@ -569,6 +571,29 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
         }),
       )
     await log.close().catch(() => undefined)
+  }
+}
+
+/** Tokens charged for the next-step suggestions (a small model; about a tenth of a credit). */
+const SUGGESTION_TOKENS = 1_000
+
+/** Saves one-click next steps for a finished reply (best effort, in the background). */
+async function offerNextSteps(run: AgentRunRow) {
+  try {
+    const messages = await persistence.stores.messages.loadThread(run.project_id)
+    const reply = [...messages].reverse().find((m) => m.role === 'assistant' && m.content)
+    const text = typeof reply?.content === 'string' ? reply.content : ''
+    if (!text.trim()) return
+    const suggestions = await suggestNextSteps(run.prompt, text)
+    if (!suggestions.length) return
+    await updateRun(run.id, { suggestions })
+    await chargeTokens(run.id, SUGGESTION_TOKENS).catch(() => undefined)
+  } catch (error) {
+    logger.warn('Saving reply suggestions failed', {
+      event: 'suggestions.save_failed',
+      runId: run.id,
+      ...errorFields(error),
+    })
   }
 }
 
@@ -677,8 +702,15 @@ export async function hasActiveRun(projectId: string): Promise<boolean> {
 }
 
 /** Adds a short assistant note to the transcript (e.g. after a restore), so the model knows. */
-export async function appendAssistantNote(projectId: string, note: string) {
+export async function appendAssistantNote(
+  projectId: string,
+  note: string,
+  { unlessRepeated = false }: { unlessRepeated?: boolean } = {},
+) {
   const messages = await persistence.stores.messages.loadThread(projectId)
+  const last = messages.at(-1)
+  // Many small edits in a row (visual editor) leave one note, not one per click.
+  if (unlessRepeated && last?.role === 'assistant' && last.content === note) return
   await persistence.stores.messages.saveThread(projectId, [
     ...messages,
     { role: 'assistant', content: note },

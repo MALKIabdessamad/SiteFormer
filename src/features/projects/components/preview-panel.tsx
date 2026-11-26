@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode, type RefObject } from 'react'
 import { AlertTriangle, ExternalLink, Loader2, Monitor, Smartphone, Tablet } from 'lucide-react'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils/cn'
@@ -28,18 +28,30 @@ export function usePreview(project: Project) {
   const url = project.status === 'ready' ? project.preview_url : null
   const [device, setDevice] = useState<PreviewDevice>('desktop')
   const [path, setPath] = useState('/')
+  // Where the page actually is (the editor bridge reports link clicks inside the preview).
+  const [current, setCurrent] = useState<string | null>(null)
   const [reloads, setReloads] = useState(0)
   return {
     url,
     device,
     setDevice,
+    /** The page the frame was opened at (changing it reloads the frame). */
     path,
+    /** The page shown right now. */
+    shownPath: current ?? path,
+    observe: setCurrent,
     go: (next: string) => {
       setPath(toPath(next))
+      setCurrent(null)
       setReloads((n) => n + 1)
     },
     reloads,
-    reload: () => setReloads((n) => n + 1),
+    /** Reloads the page that's shown (where the user clicked to, if anywhere). */
+    reload: () => {
+      if (current) setPath(current)
+      setCurrent(null)
+      setReloads((n) => n + 1)
+    },
   }
 }
 export type Preview = ReturnType<typeof usePreview>
@@ -73,14 +85,14 @@ export function PreviewControls({ projectId, preview }: { projectId: string; pre
       </button>
       <PagePicker
         projectId={projectId}
-        path={preview.path}
+        path={preview.shownPath}
         disabled={!ready}
         onGo={preview.go}
         onReload={preview.reload}
       />
       {preview.url ? (
         <a
-          href={href(preview.url, preview.path)}
+          href={href(preview.url, preview.shownPath)}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Open in a new tab"
@@ -102,20 +114,26 @@ export function PreviewControls({ projectId, preview }: { projectId: string; pre
 export function PreviewFrame({
   project,
   preview,
-  reloadSignal,
+  frameKey,
+  frameRef,
+  onFrameLoad,
+  overlay,
   retrying,
   onRetry,
 }: {
   project: Project
   preview: Preview
-  /** Changes when the preview should reload (a run finished, a restore, a manual save). */
-  reloadSignal: number
+  /** Changes whenever the frame must reload (a run finished, a restore, reload, a new path). */
+  frameKey: string
+  frameRef: RefObject<HTMLIFrameElement | null>
+  onFrameLoad: () => void
+  /** Floating editing tools over the frame. */
+  overlay?: ReactNode
   retrying: boolean
   onRetry: () => void
 }) {
   const [loaded, setLoaded] = useState<string | null>(null)
   const width = DEVICES.find((d) => d.id === preview.device)?.width ?? null
-  const frameKey = `${reloadSignal}:${preview.reloads}:${preview.path}`
 
   if (!preview.url) {
     return project.status === 'failed' ? (
@@ -141,39 +159,46 @@ export function PreviewFrame({
   }
 
   return (
-    <section
-      aria-label="Site preview"
-      className={cn(
-        'relative h-full min-h-0',
-        width ? 'overflow-auto bg-sidebar p-3 sm:p-5' : 'overflow-hidden',
-      )}
-    >
-      <div
+    <div className="relative h-full min-h-0">
+      <section
+        aria-label="Site preview"
         className={cn(
-          'relative mx-auto h-full transition-[width] duration-300',
-          width !== null &&
-            'overflow-hidden rounded-2xl shadow-[0_20px_60px_-20px_rgb(0_0_0/0.8)] ring-1 ring-white/15',
+          'relative h-full min-h-0',
+          width ? 'overflow-auto bg-sidebar p-3 sm:p-5' : 'overflow-hidden',
         )}
-        style={{ width: width ?? '100%', maxWidth: '100%' }}
       >
-        <iframe
-          key={frameKey}
-          src={href(preview.url, preview.path)}
-          title={`${project.name} preview`}
-          onLoad={() => setLoaded(frameKey)}
-          className="block h-full w-full border-0 bg-white"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
-        />
-        {loaded !== frameKey && (
-          <div
-            className="pointer-events-none absolute inset-0 grid place-items-center bg-paper/50"
-            aria-hidden
-          >
-            <Loader2 className="h-6 w-6 animate-spin text-dim" />
-          </div>
-        )}
-      </div>
-    </section>
+        <div
+          className={cn(
+            'relative mx-auto h-full transition-[width] duration-300',
+            width !== null &&
+              'overflow-hidden rounded-2xl shadow-[0_20px_60px_-20px_rgb(0_0_0/0.8)] ring-1 ring-white/15',
+          )}
+          style={{ width: width ?? '100%', maxWidth: '100%' }}
+        >
+          <iframe
+            key={frameKey}
+            ref={frameRef}
+            src={href(preview.url, preview.path)}
+            title={`${project.name} preview`}
+            onLoad={() => {
+              setLoaded(frameKey)
+              onFrameLoad()
+            }}
+            className="block h-full w-full border-0 bg-white"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+          />
+          {loaded !== frameKey && (
+            <div
+              className="pointer-events-none absolute inset-0 grid place-items-center bg-paper/50"
+              aria-hidden
+            >
+              <Loader2 className="h-6 w-6 animate-spin text-dim" />
+            </div>
+          )}
+        </div>
+      </section>
+      {overlay}
+    </div>
   )
 }
 

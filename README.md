@@ -28,6 +28,10 @@ Signed-in users who open `/` go to `/dashboard`; signed-out users who open `/das
 
 - The **starter** is cloned from [`MALKIabdessamad/app`](https://github.com/MALKIabdessamad/app)
   into `/home/node/site` with fresh git history (so the agent can checkpoint later).
+- The **editor bridge** (`.siteformer/` + `siteformer()` in `vite.config.ts`, dev only) is kept
+  at the current version on every setup, open and restore (`src/lib/server/sandbox/editor/`):
+  it tags each JSX element with its source line (`data-sf-loc`, added before TanStack's code
+  splitting) and runs a small script in the preview that talks to the editor by postMessage.
 - The **prompt is queued as the agent's first run** and starts as soon as the sandbox is ready.
 - The project page updates live through **Supabase Realtime** (plus polling while setting up).
 - Setup is **idempotent**: an interrupted setup (deploy, crash) resumes when the project page is
@@ -58,6 +62,19 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   in `agent_runs.mode`). Chat runs get read-only tools only (read/search files, preview,
   screenshots, research), make no checkpoints and don't copy attachments into the project;
   the server enforces it, not just the UI.
+- **Visual editor** (tools pill over the preview):
+  - _Select_ an element, then edit its text in place (double-click), its color, background, size,
+    weight, alignment, corners and padding (Tailwind classes), or swap an image. These are
+    direct, exact code edits (Babel finds the element by its source line): instant, no AI, no
+    credits, committed as a checkpoint and noted in the chat. When the value comes from code,
+    the editor offers _Ask AI_ instead. The card also has an _Ask AI to change this_ box.
+  - _Annotate_: pin numbered notes on elements; they travel with the next message as lines like
+    `⌖1 <h1> "…" at src/routes/index.tsx:23:9 on / — note` (shown as chips in the chat).
+  - _Theme_: the site's colors (oklch in `src/styles.css`) and corners, previewed live.
+  - Page errors show a calm card with _Fix it_; the path bar follows link clicks in the preview.
+- **Queue and suggestions.** Messages typed while the agent works wait in a queue and send when
+  it's done. After each reply, a small model suggests up to three next steps
+  (`agent_runs.suggestions`).
 - **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
   row of icons: _Revert to this version_ / _Undo latest edit_, plus the credits it used. A restore
   is a new commit (undoable) and adds a note to the transcript so the model knows.
@@ -107,11 +124,12 @@ src/
 │   ├── auth/                   # Sign in/up/reset: AuthScreen, authService, requireUser guard
 │   ├── dashboard/              # DashboardScreen, AppSidebar, PromptBox, MobileTopBar
 │   ├── projects/               # ProjectScreen, preview + code tabs, server fns (create/open/
-│   │                           # retry/delete, code read/save, site pages), RLS reads +
-│   │                           # Realtime; the page list comes from the site's routeTree.gen.ts;
-│   │                           # Publish is a placeholder (coming soon)
+│   │                           # retry/delete, code read/save, site pages, visual edits,
+│   │                           # theme), the visual editor (preview tools, bridge hook), RLS
+│   │                           # reads + Realtime; Publish is a placeholder (coming soon)
 │   ├── agent/                  # AgentChat, tool steps, attachments, checkpoints (restore),
-│   │                           # runs (useAgentRuns); lib/upload-ref.ts is shared with the server
+│   │                           # runs (useAgentRuns), composer (pins, queue); element
+│   │                           # reference lines; lib/upload-ref.ts is shared with the server
 │   └── billing/                # BillingScreen, CreditsChip, useAccount, (mock) checkout fns;
 │                               # lib/credits.ts (credit math) is shared with the server
 ├── components/                 # ui/ primitives (Button, Input, Alert…), brand/ (Logo)
@@ -131,8 +149,12 @@ src/
 │       ├── billing/            # Plans + credits (charge_tokens / grant_credits)
 │       ├── agent/              # Runner (queue, leases, recovery), tools, persistence, memory,
 │       │                       # middleware (vision, credits, logging), uploads, screenshots
-│       ├── sandbox/            # agent37.server.ts (API client), provision.server.ts (setup)
-│       └── ai/                 # naming.server.ts (project names)
+│       ├── sandbox/            # agent37.server.ts (API client), provision.server.ts (setup),
+│       │                       # editor/ (the bridge files written into every sandbox)
+│       ├── visual-edit/        # jsx-edit.ts: exact text/class/src edits by source location
+│       ├── project-files.server.ts  # The user's own file edits: ownership, paths, reads
+│       ├── serial.ts           # One-at-a-time per key (edits of the same file)
+│       └── ai/                 # naming.server.ts (project names), suggestions.server.ts
 ├── config/                     # env.ts (validated public env), site.ts (name, meta)
 ├── styles/globals.css          # Tailwind v4 theme tokens + sculpted utilities
 ├── router.tsx                  # Router factory

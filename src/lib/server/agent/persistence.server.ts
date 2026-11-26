@@ -35,6 +35,8 @@ export type AgentRunRow = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
+  /** One-click next steps under the reply (set after the run completes). */
+  suggestions: Array<string> | null
   mode: ProjectMode
   lease_owner: string | null
   lease_until: string | null

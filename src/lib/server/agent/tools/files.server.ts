@@ -17,6 +17,7 @@ import {
   writeText,
   type SandboxSession,
 } from '../sandbox-session.server'
+import { serialQueue } from '../../serial'
 
 const READ_MAX_LINES = 400
 const LIST_MAX = 300
@@ -25,6 +26,10 @@ const SEARCH_MAX = 80
 const lineCount = (text: string) => (text === '' ? 0 : text.split('\n').length)
 
 export function fileTools(session: SandboxSession) {
+  // The model often sends several edits of one file in a single step, and tool calls run in
+  // parallel: each would read the same original and the last write would drop the others.
+  const serial = serialQueue()
+
   const listFiles = toolDefinition({
     name: 'list_files',
     description:
@@ -118,7 +123,7 @@ export function fileTools(session: SandboxSession) {
     inputSchema: z.object({ path: z.string(), content: z.string().max(400_000) }),
   }).server(async ({ path, content }) => {
     const absolute = sitePath(path)
-    await writeText(session, absolute, content)
+    await serial(absolute, () => writeText(session, absolute, content))
     return { path: relativePath(absolute), lines: lineCount(content) }
   })
 
@@ -140,8 +145,17 @@ export function fileTools(session: SandboxSession) {
       newText: z.string().describe('The replacement text.'),
       replaceAll: z.boolean().optional().describe('Replace every occurrence.'),
     }),
-  }).server(async ({ path, oldText, newText: rawNewText, replaceAll = false }) => {
+  }).server(({ path, oldText, newText, replaceAll = false }) => {
     const absolute = sitePath(path)
+    return serial(absolute, () => applyEdit(absolute, oldText, newText, replaceAll))
+  })
+
+  async function applyEdit(
+    absolute: string,
+    oldText: string,
+    rawNewText: string,
+    replaceAll: boolean,
+  ) {
     const where = relativePath(absolute)
     const text = await readText(session, absolute)
     // Leftover JSON escaping in newText (\" instead of "): undo it, unless the file itself
@@ -175,7 +189,7 @@ export function fileTools(session: SandboxSession) {
       lines: lineCount(updated),
       ...(strategy !== 'exact' ? { note: `matched ignoring ${strategy}` } : {}),
     }
-  })
+  }
 
   const deletePath = toolDefinition({
     name: 'delete_path',

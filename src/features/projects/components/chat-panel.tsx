@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Eye, Loader2, PanelLeftClose, Trash2 } from 'lucide-react'
-import { AgentChat, type AgentRun } from '~/features/agent'
+import { AgentChat, type AgentRun, type Composer } from '~/features/agent'
 import { CreditsChip, useAccount } from '~/features/billing'
 import { toErrorMessage } from '~/lib/utils/errors'
 import { setProjectMode } from '../api/projects.functions'
@@ -29,6 +29,7 @@ type ChatPanelProps = {
   onBusyChange: (busy: boolean) => void
   /** Re-reads the project (after its mode was saved). */
   onProjectChanged: () => Promise<unknown>
+  composer: Composer
 }
 
 /** Conversation column: project header + the coding agent's chat. */
@@ -46,6 +47,7 @@ export function ChatPanel({
   onActivity,
   onBusyChange,
   onProjectChanged,
+  composer,
 }: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const { account } = useAccount()
@@ -166,8 +168,9 @@ export function ChatPanel({
         onBusyChange={onBusyChange}
         outOfCredits={account !== null && account.credits < 1}
         mode={mode}
-        onModeChange={(next) => void changeMode(next)}
+        onModeChange={changeMode}
         modeSaving={pendingMode !== null}
+        composer={composer}
       />
       {modeError && (
         <p role="alert" className="mx-3 mb-2 text-xs text-danger">

@@ -10,12 +10,14 @@ export type AgentRun = {
   checkpoint_after: string | null
   files_changed: number | null
   credits_used: number
+  /** One-click next steps under the reply (arrive a few seconds after it finishes). */
+  suggestions: Array<string> | null
   created_at: string
   finished_at: string | null
 }
 
 const COLUMNS =
-  'id, status, prompt, checkpoint_before, checkpoint_after, files_changed, credits_used, created_at, finished_at'
+  'id, status, prompt, checkpoint_before, checkpoint_after, files_changed, credits_used, suggestions, created_at, finished_at'
 
 /** Polling interval while a run is active (Realtime usually updates sooner). */
 const ACTIVE_POLL_MS = 4000
@@ -76,11 +78,19 @@ export function useAgentRuns(projectId: string) {
   // still update).
   const activeRun = runs.find(isActiveRun)
   const unsettled = runs.some((run) => !isSettledRun(run))
+  // Next-step suggestions arrive a few seconds after a reply ends: keep looking for a moment.
+  const last = runs.at(-1)
+  const awaitingSince = last?.status === 'completed' && !last.suggestions ? last.finished_at : null
   useEffect(() => {
-    if (!unsettled) return
+    const wait = awaitingSince ? Date.parse(awaitingSince) + 40_000 - Date.now() : 0
+    if (!unsettled && wait <= 0) return
     const timer = setInterval(() => void refresh(), ACTIVE_POLL_MS)
-    return () => clearInterval(timer)
-  }, [unsettled, refresh])
+    const stop = unsettled ? undefined : setTimeout(() => clearInterval(timer), wait)
+    return () => {
+      clearInterval(timer)
+      clearTimeout(stop)
+    }
+  }, [unsettled, awaitingSince, refresh])
 
   return { runs, activeRun, refresh }
 }

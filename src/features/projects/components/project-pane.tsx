@@ -1,9 +1,12 @@
 import { useState, type ReactNode } from 'react'
+import type { Composer, SendOptions } from '~/features/agent'
 import { Code2, Eye } from 'lucide-react'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '../types'
 import { CodePanel } from './code-panel'
+import { useVisualEditor } from '../hooks/use-visual-editor'
 import { PreviewControls, PreviewFrame, usePreview } from './preview-panel'
+import { PreviewTools } from './preview-tools'
 import { PublishButton } from './publish-button'
 
 type Tab = 'preview' | 'code'
@@ -26,6 +29,9 @@ export function ProjectPane({
   retrying,
   onRetry,
   onSaved,
+  composer,
+  onAsk,
+  onVisualEdit,
   chatToggle,
 }: {
   project: Project
@@ -34,12 +40,27 @@ export function ProjectPane({
   retrying: boolean
   onRetry: () => void
   onSaved: () => void
+  composer: Composer
+  /** Sends a message to the AI (from the preview's editing tools). */
+  onAsk: (text: string, options?: SendOptions) => void
+  /** A direct edit in the preview was saved. */
+  onVisualEdit: () => void
   /** Buttons that bring the chat back (phone: switch view; desktop: reopen the collapsed chat). */
   chatToggle: ReactNode
 }) {
   const [tab, setTab] = useState<Tab>('preview')
   const [codeOpened, setCodeOpened] = useState(false)
   const preview = usePreview(project)
+  const frameKey = `${reloadSignal}:${preview.reloads}:${preview.path}`
+  const editor = useVisualEditor({
+    projectId: project.id,
+    preview,
+    frameKey,
+    composer,
+    agentBusy,
+    onAsk,
+    onEdited: onVisualEdit,
+  })
 
   const choose = (next: Tab) => {
     setTab(next)
@@ -90,7 +111,18 @@ export function ProjectPane({
           <PreviewFrame
             project={project}
             preview={preview}
-            reloadSignal={reloadSignal}
+            frameKey={frameKey}
+            frameRef={editor.bridge.frame}
+            onFrameLoad={editor.bridge.hello}
+            overlay={
+              <PreviewTools
+                editor={editor}
+                projectId={project.id}
+                mode={project.mode}
+                agentBusy={agentBusy}
+                pinCount={composer.pins.length}
+              />
+            }
             retrying={retrying}
             onRetry={onRetry}
           />

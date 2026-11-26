@@ -1,12 +1,24 @@
 import { Link } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ArrowUp, ChevronRight, Coins, History, Loader2, PencilLine, Square } from 'lucide-react'
+import {
+  ArrowUp,
+  ChevronRight,
+  Clock,
+  Coins,
+  History,
+  Loader2,
+  PencilLine,
+  Square,
+  X,
+} from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project, ProjectMode } from '~/features/projects'
 import { useAgentChat } from '../hooks/use-agent-chat'
 import { useAttachments } from '../hooks/use-attachments'
-import { uploadParts } from '../lib/attachments'
+import type { Composer, SendOptions } from '../hooks/use-composer'
+import { uploadParts, type Upload } from '../lib/attachments'
+import { referenceLine, splitReferences } from '../lib/references'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns, type Segment } from '../lib/turns'
@@ -32,9 +44,11 @@ type AgentChatProps = {
   outOfCredits?: boolean
   /** Build (the agent edits) or Chat (read-only). Saved on the project. */
   mode: ProjectMode
-  onModeChange: (mode: ProjectMode) => void
+  onModeChange: (mode: ProjectMode) => Promise<void>
   /** A mode change is being saved: sending waits for it. */
   modeSaving?: boolean
+  /** Draft, pins and queue (they outlive this component) and the send handle for the workspace. */
+  composer: Composer
 }
 
 export function AgentChat({
@@ -49,9 +63,14 @@ export function AgentChat({
   mode,
   onModeChange,
   modeSaving = false,
+  composer,
 }: AgentChatProps) {
   const chat = useAgentChat(project.id)
-  const [draft, setDraft] = useState('')
+  const [draft, setDraftState] = useState(composer.readDraft)
+  const setDraft = (value: string) => {
+    composer.saveDraft(value)
+    setDraftState(value)
+  }
   const [sendError, setSendError] = useState('')
   const attachments = useAttachments(project.id)
   const [dragging, setDragging] = useState(false)
@@ -61,6 +80,9 @@ export function AgentChat({
 
   const streaming = chat.isLoading || chat.status === 'streaming' || chat.status === 'submitted'
   const busy = streaming || Boolean(activeRun)
+  // The server takes the next message once the last run is fully done (checkpoint written).
+  const lastRun = runs.at(-1)
+  const free = !busy && (!lastRun || isSettledRun(lastRun))
   const turns = useMemo(() => buildTurns(chat.messages, streaming), [chat.messages, streaming])
 
   useEffect(() => {
@@ -103,21 +125,9 @@ export function AgentChat({
     if (list && stickToBottom.current) list.scrollTop = list.scrollHeight
   }, [chat.messages, runs])
 
-  const send = async (event?: FormEvent) => {
-    event?.preventDefault()
-    const text = draft.trim()
-    const uploads = attachments.ready
-    if (
-      (!text && uploads.length === 0) ||
-      busy ||
-      attachments.uploading ||
-      outOfCredits ||
-      modeSaving
-    )
-      return
+  /** Sends a message now. Throws (after showing why) when it couldn't be sent. */
+  const deliver = async (text: string, uploads: Array<Upload>) => {
     setSendError('')
-    setDraft('')
-    attachments.clear()
     stickToBottom.current = true
     try {
       if (uploads.length) {
@@ -131,12 +141,70 @@ export function AgentChat({
         await chat.sendMessage(text)
       }
     } catch (err) {
-      setDraft(text)
       const message = err instanceof Error ? err.message : 'Could not send. Try again.'
       setSendError(message)
       reportClientError('agent-send', message, { projectId: project.id })
+      throw err
     }
   }
+
+  const enqueue = (text: string, uploads: Array<Upload>) =>
+    composer.setQueue((queue) => [...queue, { id: crypto.randomUUID(), text, uploads }])
+
+  /** The composer's message: the typed text plus one line per pinned note. */
+  const send = async (event?: FormEvent) => {
+    event?.preventDefault()
+    const pins = composer.pins.map((pin) =>
+      referenceLine(pin.element, { n: pin.n, note: pin.note }),
+    )
+    const typed = draft.trim() || (pins.length ? 'Make these changes:' : '')
+    const text = [typed, pins.join('\n')].filter(Boolean).join('\n\n')
+    const uploads = attachments.ready
+    if ((!text && uploads.length === 0) || attachments.uploading || outOfCredits || modeSaving)
+      return
+    setDraft('')
+    attachments.clear()
+    composer.setPins([])
+    if (!free) return enqueue(text, uploads)
+    try {
+      await deliver(text, uploads)
+    } catch {
+      setDraft(text)
+    }
+  }
+
+  // Queued messages go one by one, each once the agent is free again.
+  const flushing = useRef(false)
+  const nextQueued = composer.queue[0]
+  useEffect(() => {
+    if (!nextQueued || !free || outOfCredits || modeSaving || flushing.current) return
+    flushing.current = true
+    composer.setQueue((queue) => queue.filter((item) => item.id !== nextQueued.id))
+    deliver(nextQueued.text, nextQueued.uploads)
+      .catch(() => composer.setQueue((queue) => [nextQueued, ...queue]))
+      .finally(() => {
+        flushing.current = false
+      })
+    // deliver/composer are stable enough; the queue head and readiness drive this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextQueued, free, outOfCredits, modeSaving])
+
+  // The workspace (preview tools, fixes) sends through here: queued while the agent works.
+  const external = useRef<(text: string, options?: SendOptions) => Promise<void>>(() =>
+    Promise.resolve(),
+  )
+  useEffect(() => {
+    external.current = async (text, { mode: wanted, uploads = [] } = {}) => {
+      if (wanted && wanted !== mode) await onModeChange(wanted)
+      if (!free) return enqueue(text, uploads)
+      await deliver(text, uploads).catch(() => undefined)
+    }
+  })
+  const { register } = composer
+  useEffect(
+    () => register({ send: (text, options) => external.current(text, options) }),
+    [register],
+  )
 
   const waitingForSandbox = Boolean(activeRun) && project.status !== 'ready'
   const latestRunId = runs.at(-1)?.id
@@ -174,13 +242,7 @@ export function AgentChat({
           return (
             <li key={turn.key} className="space-y-2">
               {turn.attachments.length > 0 && <MessageAttachments ids={turn.attachments} />}
-              {turn.user !== null && (
-                <div className="flex justify-end">
-                  <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
-                    {turn.user}
-                  </div>
-                </div>
-              )}
+              {turn.user !== null && <UserMessage text={turn.user} />}
               <div className="space-y-1.5">
                 {groupSegments(turn.segments).map((group) =>
                   group.kind === 'tools' ? (
@@ -199,6 +261,21 @@ export function AgentChat({
                   ) : null,
                 )}
               </div>
+              {finished && run && run.id === latestRunId && free && run.suggestions?.length ? (
+                <div aria-label="Suggested next steps" className="flex flex-wrap gap-1.5 pt-0.5">
+                  {run.suggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => void external.current(suggestion)}
+                      disabled={outOfCredits}
+                      className="rounded-full border bg-ink/[0.02] px-3 py-1.5 text-left text-xs text-dim transition-colors hover:border-signal/50 hover:text-ink disabled:opacity-50"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {finished && run && (
                 <ReplyActions
                   projectId={project.id}
@@ -285,6 +362,32 @@ export function AgentChat({
             {sendError || chat.error?.message}
           </p>
         )}
+        {composer.queue.length > 0 && (
+          <ul aria-label="Queued messages" className="mb-2 space-y-1">
+            {composer.queue.map((item) => (
+              <li
+                key={item.id}
+                className="flex items-center gap-2 rounded-xl border bg-ink/[0.02] py-1 pr-1 pl-3 text-xs text-dim"
+              >
+                <Clock className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden />
+                <span className="min-w-0 flex-1 truncate">
+                  {splitReferences(item.text).text || item.text}
+                </span>
+                <span className="shrink-0 text-faint">Queued</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    composer.setQueue((queue) => queue.filter((queued) => queued.id !== item.id))
+                  }
+                  aria-label="Remove from queue"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div
           className={cn(
             'rounded-[22px] p-2 box-sculpted transition-colors focus-within:border-signal/60',
@@ -292,6 +395,49 @@ export function AgentChat({
           )}
         >
           <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
+          {composer.pins.length > 0 && (
+            <ul aria-label="Pinned notes" className="mb-1 space-y-1 px-1 pt-1">
+              {composer.pins.map((pin) => (
+                <li key={pin.n} className="flex items-center gap-2">
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-signal text-[10px] font-bold text-signal-ink">
+                    {pin.n}
+                  </span>
+                  <span
+                    className="max-w-[7rem] shrink-0 truncate font-mono text-[11px] text-faint"
+                    title={`${pin.element.text} · ${pin.element.loc}`}
+                  >
+                    &lt;{pin.element.tag}&gt; {pin.element.text}
+                  </span>
+                  <input
+                    value={pin.note}
+                    maxLength={500}
+                    onChange={(e) =>
+                      composer.setPins((pins) =>
+                        pins.map((p) => (p.n === pin.n ? { ...p, note: e.target.value } : p)),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void send()
+                      }
+                    }}
+                    placeholder="What should change here?"
+                    aria-label={`Note for pin ${pin.n}`}
+                    className="h-7 min-w-0 flex-1 rounded-lg bg-ink/[0.04] px-2 text-xs outline-none placeholder:text-faint focus:bg-ink/[0.07]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => composer.setPins((pins) => pins.filter((p) => p.n !== pin.n))}
+                    aria-label={`Remove pin ${pin.n}`}
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <label htmlFor="agent-input" className="sr-only">
             Message the agent
           </label>
@@ -312,7 +458,7 @@ export function AgentChat({
             onKeyDown={(e) => {
               if (isModeShortcut(e)) {
                 e.preventDefault()
-                if (!modeSaving) onModeChange(nextMode(mode))
+                if (!modeSaving) void onModeChange(nextMode(mode))
               } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 void send()
@@ -322,7 +468,7 @@ export function AgentChat({
               project.status === 'provisioning'
                 ? 'Waiting for the sandbox…'
                 : busy
-                  ? 'The agent is working… (you can stop it)'
+                  ? 'Type your next message (it sends when the agent is done)'
                   : mode === 'chat'
                     ? 'Ask anything about your project…'
                     : 'Ask for a change…'
@@ -333,7 +479,7 @@ export function AgentChat({
             <AttachButton onFiles={attachments.add} count={attachments.items.length} />
             <ModeMenu mode={mode} disabled={modeSaving} onChange={onModeChange} />
             <span className="flex-1" />
-            {busy ? (
+            {busy && (
               <button
                 type="button"
                 onClick={() => void chat.cancel(activeRun?.id ?? chat.runId ?? undefined)}
@@ -343,17 +489,24 @@ export function AgentChat({
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
               </button>
-            ) : (
+            )}
+            {(!busy || draft.trim() || composer.pins.length > 0) && (
               <button
                 type="submit"
                 disabled={
-                  (!draft.trim() && attachments.ready.length === 0) ||
+                  (!draft.trim() && attachments.ready.length === 0 && composer.pins.length === 0) ||
                   attachments.uploading ||
                   outOfCredits ||
                   modeSaving
                 }
-                title={attachments.uploading ? 'Uploading files…' : undefined}
-                aria-label="Send"
+                title={
+                  attachments.uploading
+                    ? 'Uploading files…'
+                    : busy
+                      ? 'Send when the agent is done'
+                      : undefined
+                }
+                aria-label={busy ? 'Queue message' : 'Send'}
                 className="grid h-9 w-9 shrink-0 btn-sculpted place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ArrowUp className="h-4 w-4" />
@@ -362,6 +515,34 @@ export function AgentChat({
           </div>
         </div>
       </form>
+    </div>
+  )
+}
+
+/** The user's message; elements they pointed at in the preview show as chips. */
+function UserMessage({ text }: { text: string }) {
+  const { text: body, refs } = splitReferences(text)
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
+        {body}
+        {refs.length > 0 && (
+          <ul className={cn('space-y-1 whitespace-normal', body && 'mt-2')}>
+            {refs.map((ref, i) => (
+              <li key={i} className="text-xs" title={ref.loc}>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-signal/20 px-1 text-[10px] font-bold text-signal">
+                    {ref.n ?? '⌖'}
+                  </span>
+                  <span className="shrink-0 font-mono text-faint">&lt;{ref.tag}&gt;</span>
+                  <span className="min-w-0 truncate text-dim">{ref.text}</span>
+                </div>
+                {ref.note && <p className="mt-0.5 pl-[22px] text-ink">{ref.note}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

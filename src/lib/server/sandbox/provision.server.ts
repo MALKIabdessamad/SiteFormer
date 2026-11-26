@@ -2,6 +2,7 @@ import { serverEnv } from '../env.server'
 import { appEnv } from './app-env'
 import { errorFields, log as slog } from '../log.server'
 import { BROWSER_BACKGROUND_INSTALL } from './browser-install'
+import { editorInstallScript } from './editor/install'
 import {
   createInstance,
   ensurePublicUrl,
@@ -65,7 +66,9 @@ function setupScript(): string {
     `if [ ! -x node_modules/.bin/vite ]; then`,
     `  (bun install --frozen-lockfile || bun install) >/tmp/install.log 2>&1 || { tail -15 /tmp/install.log >&2; exit 13; }`,
     `fi`,
-    // 4. Dev server, unless it is already running. "[v]ite" keeps pgrep from matching itself.
+    // 4. Editor support (dev-only Vite plugin), kept at the current version.
+    editorInstallScript(),
+    // 5. Dev server, unless it is already running. "[v]ite" keeps pgrep from matching itself.
     `if ! pgrep -f "[v]ite dev" >/dev/null 2>&1; then`,
     `  nohup bun run dev >/tmp/dev.log 2>&1 &`,
     `fi`,
@@ -146,7 +149,14 @@ async function resume(target: ProvisionTarget): Promise<void> {
     await target.save({ sandbox_id: null, preview_url: null, status: 'provisioning', error: null })
     return provision({ ...target, sandboxId: null })
   }
-  const start = `cd ${shellQuote(SITE_DIR)} && (pgrep -f "[v]ite dev" >/dev/null 2>&1 || (PATH="$HOME/.bun/bin:$PATH" nohup bun run dev >/tmp/dev.log 2>&1 &)) && echo ok`
+  const start = [
+    `cd ${shellQuote(SITE_DIR)}`,
+    'export PATH="$HOME/.bun/bin:$PATH"',
+    // Older projects get the editor bridge here (and every project its latest version).
+    editorInstallScript(),
+    '(pgrep -f "[v]ite dev" >/dev/null 2>&1 || (nohup bun run dev >/tmp/dev.log 2>&1 &))',
+    'echo ok',
+  ].join('\n')
   await exec(target.sandboxId, start, 60_000)
   await waitForPreview(target.sandboxId, 90_000)
 }

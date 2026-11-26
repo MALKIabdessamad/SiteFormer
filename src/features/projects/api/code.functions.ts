@@ -6,35 +6,27 @@
  * the file changed since the user opened it (`baseHash`). Each save is committed as a checkpoint
  * and noted in the chat, so the user sees it and the agent knows to re-read the file.
  */
-import { createHash } from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { commitAll, ensureRepo } from '~/lib/server/agent/checkpoints.server'
 import { appendAssistantNote, hasActiveRun } from '~/lib/server/agent/runner.server'
-import {
-  projectSession,
-  relativePath,
-  sh,
-  shellQuote,
-  sitePath,
-  ToolError,
-  writeText,
-  type SandboxSession,
-} from '~/lib/server/agent/sandbox-session.server'
+import { relativePath, sh, shellQuote, writeText } from '~/lib/server/agent/sandbox-session.server'
 import { restartDevServer } from '~/lib/server/agent/tools/shell.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
-import { ownedProject } from '~/lib/server/projects.server'
+import {
+  editablePath,
+  MAX_EDIT_BYTES,
+  readFile,
+  sessionFor,
+  sha1,
+} from '~/lib/server/project-files.server'
 import { rateLimiter } from '~/lib/server/rate-limit'
 import { requireUser } from '~/lib/server/require-user'
 import { validate } from '~/lib/server/validate'
 import { sitePages } from '../lib/site-pages'
 
 const MAX_FILES = 2000
-/** Files above this open read-only (and can't be saved from the editor). */
-const MAX_EDIT_BYTES = 1_000_000
-
-const sha1 = (text: string) => createHash('sha1').update(text).digest('hex')
 
 const ListInput = validate(z.object({ projectId: z.uuid('Project not found.') }))
 const ReadInput = validate(
@@ -49,60 +41,9 @@ const SaveInput = validate(
   }),
 )
 
-/** A path the editor may touch: inside the project, not git internals or installed packages. */
-function editablePath(input: string): string {
-  let absolute: string
-  try {
-    absolute = sitePath(input)
-  } catch (error) {
-    throw new AppError(error instanceof ToolError ? error.message : 'Invalid path.')
-  }
-  const rel = relativePath(absolute)
-  if (/^(node_modules|\.git)(\/|$)/.test(rel)) throw new AppError('This folder can’t be edited.')
-  return absolute
-}
-
 // Every call runs a command in the sandbox: cap them per user.
 const allowRead = rateLimiter(120)
 const allowSave = rateLimiter(30)
-
-async function sessionFor(
-  userId: string,
-  projectId: string,
-  allow: (key: string) => boolean,
-): Promise<SandboxSession> {
-  if (!allow(userId)) throw new AppError('Too many requests. Wait a moment.', 'limit')
-  const project = await ownedProject(userId, projectId)
-  if (project.status !== 'ready' || !project.sandbox_id) {
-    throw new AppError('The sandbox is not ready yet.', 'unavailable')
-  }
-  return projectSession({ ...project, sandbox_id: project.sandbox_id }, `manual-${Date.now()}`)
-}
-
-type FileRead =
-  | { kind: 'missing' }
-  | { kind: 'binary'; size: number }
-  | { kind: 'large'; size: number }
-  | { kind: 'text'; content: string; size: number }
-
-async function readFile(session: SandboxSession, absolute: string): Promise<FileRead> {
-  const q = shellQuote(absolute)
-  const result = await sh(
-    session,
-    `if [ ! -f ${q} ]; then echo MISSING; exit 0; fi; size=$(stat -c %s ${q}); ` +
-      `if grep -qI . ${q} || [ "$size" -eq 0 ]; then kind=text; else kind=binary; fi; ` +
-      `echo "$kind $size"; if [ "$kind" = text ] && [ "$size" -le ${MAX_EDIT_BYTES} ]; then base64 -w0 ${q}; fi`,
-    { timeoutSeconds: 30 },
-  )
-  const [head = '', body = ''] = result.stdout.split('\n')
-  if (head.trim() === 'MISSING') return { kind: 'missing' }
-  const [kind, sizeText] = head.trim().split(' ')
-  const size = Number(sizeText) || 0
-  if (result.exitCode !== 0) throw new Error(`Could not read ${relativePath(absolute)}`)
-  if (kind === 'binary') return { kind: 'binary', size }
-  if (size > MAX_EDIT_BYTES) return { kind: 'large', size }
-  return { kind: 'text', size, content: Buffer.from(body.trim(), 'base64').toString('utf8') }
-}
 
 /** The project's files (git-tracked plus new, ignoring node_modules/build output). */
 export const listProjectFiles = createServerFn({ method: 'POST' })
@@ -115,7 +56,7 @@ export const listProjectFiles = createServerFn({ method: 'POST' })
         session,
         `if [ -d .git ]; then git ls-files --cached --others --exclude-standard; ` +
           `else find . -type f -not -path './node_modules/*' -not -path './.git/*' | sed 's|^./||'; fi ` +
-          `| sort | head -${MAX_FILES + 1}`,
+          `| grep -v '^\\.siteformer/' | sort | head -${MAX_FILES + 1}`,
         { timeoutSeconds: 30 },
       )
       const files = result.stdout.split('\n').filter(Boolean)
