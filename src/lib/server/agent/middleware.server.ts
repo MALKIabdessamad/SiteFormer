@@ -1,4 +1,6 @@
 import type { ChatMiddleware, ContentPart, ModelMessage } from '@tanstack/ai'
+import { billableTokens, type Usage } from '~/features/billing/lib/credits'
+import { chargeTokens } from '../billing/credits.server'
 import { errorFields, log } from '../log.server'
 import { persistence } from './persistence.server'
 import type { SandboxSession } from './sandbox-session.server'
@@ -215,6 +217,44 @@ export function attachmentsMiddleware(session: SandboxSession): ChatMiddleware {
         }
       })
       return { providerMessages: messages }
+    },
+  }
+}
+
+/**
+ * Charges credits after every model step (in the database, so a crash or deploy never skips
+ * usage) and calls `onExhausted` once the balance reaches zero; the runner then stops the run.
+ * Charges are serialized so the balance seen is always the latest.
+ */
+export function creditsMiddleware(
+  session: SandboxSession,
+  onExhausted: () => void,
+): ChatMiddleware {
+  let queue: Promise<unknown> = Promise.resolve()
+  let exhausted = false
+  return {
+    name: 'siteformer-credits',
+    onUsage(_ctx, usage) {
+      const tokens = billableTokens(usage as Usage)
+      if (tokens <= 0) return
+      queue = queue.then(async () => {
+        try {
+          const balance = await chargeTokens(session.runId, tokens)
+          if (balance <= 0 && !exhausted) {
+            exhausted = true
+            onExhausted()
+          }
+        } catch (error) {
+          // Never break a run over metering; the failure is logged for follow-up.
+          log.error('Charging credits failed', {
+            event: 'billing.charge_failed',
+            runId: session.runId,
+            tokens,
+            ...errorFields(error),
+          })
+        }
+      })
+      return queue as Promise<void>
     },
   }
 }

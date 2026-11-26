@@ -57,6 +57,8 @@ export function CheckpointCard({
           <History className="h-3.5 w-3.5" aria-hidden />
           {STATUS[run.status] ?? 'Finished'} ·{' '}
           {changed === 0 ? 'no file changes' : `${changed} file${changed === 1 ? '' : 's'} changed`}
+          {run.credits_used > 0 &&
+            ` · ${run.credits_used} credit${run.credits_used === 1 ? '' : 's'}`}
         </span>
         {!confirm && (canUndo || canRestore) && (
           <span className="ml-auto flex gap-1">

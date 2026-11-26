@@ -8,12 +8,13 @@ export type AgentRun = {
   checkpoint_before: string | null
   checkpoint_after: string | null
   files_changed: number | null
+  credits_used: number
   created_at: string
   finished_at: string | null
 }
 
 const COLUMNS =
-  'id, status, prompt, checkpoint_before, checkpoint_after, files_changed, created_at, finished_at'
+  'id, status, prompt, checkpoint_before, checkpoint_after, files_changed, credits_used, created_at, finished_at'
 
 /** Polling interval while a run is active (Realtime usually updates sooner). */
 const ACTIVE_POLL_MS = 4000

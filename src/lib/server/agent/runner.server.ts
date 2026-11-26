@@ -35,10 +35,12 @@ import { serverEnv } from '../env.server'
 import { getProject, provisionTarget, type ProjectRow } from '../projects.server'
 import { ensureProvisioned, isBusy } from '../sandbox/provision.server'
 import { supabaseAdmin } from '../supabase-admin.server'
+import { requireCredits } from '../billing/credits.server'
 import { commitAll, ensureRepo, filesChanged } from './checkpoints.server'
 import { supabaseMemory } from './memory.server'
 import {
   attachmentsMiddleware,
+  creditsMiddleware,
   loggingMiddleware,
   progressSaverMiddleware,
   stripAttachments,
@@ -169,6 +171,7 @@ export async function enqueueRun(input: {
   if (!isValidRunId(runId)) throw new AppError('Invalid run id.')
 
   const existing = await getRunRow(runId)
+  if (!existing) await requireCredits(userId)
   if (existing) {
     if (existing.user_id !== userId || existing.project_id !== projectId) {
       throw new AppError('Invalid run id.')
@@ -294,6 +297,7 @@ function agentStream(
   resumed: boolean,
   controller: AbortController,
   runLog: ReturnType<typeof logger.with>,
+  onOutOfCredits: () => void,
 ) {
   const env = serverEnv()
   const adapter = createOpenRouterText(
@@ -340,6 +344,7 @@ function agentStream(
       visionMiddleware(session),
       progressSaverMiddleware(row.project_id),
       loggingMiddleware(runLog),
+      creditsMiddleware(session, onOutOfCredits),
     ],
   })
 }
@@ -436,6 +441,8 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
   }
   const runLog = logger.with({ runId, projectId: row.project_id })
   const startedAt = now()
+  let noCredits = false
+  const projectId = row.project_id
   try {
     const project = await waitForSandbox(row, log, controller.signal)
     session = sessionFor(row, project, controller.signal)
@@ -461,7 +468,20 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
     }
     const context = await runContext(session)
 
-    for await (const chunk of agentStream(row, session, context, resumed, controller, runLog)) {
+    const outOfCredits = () => {
+      noCredits = true
+      runLog.info('Agent run stopped: out of credits', { event: 'agent.out_of_credits' })
+      void requestRunCancel(runStore, runId).finally(() => controller.abort())
+    }
+    for await (const chunk of agentStream(
+      row,
+      session,
+      context,
+      resumed,
+      controller,
+      runLog,
+      outOfCredits,
+    )) {
       await log.append([chunk])
     }
   } catch (error) {
@@ -472,7 +492,8 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
         : stopped
           ? 'Stopped.'
           : 'The agent hit an error. Try again.'
-    if (stopped) runLog.info('Agent run stopped by the user', { event: 'agent.stopped' })
+    if (stopped && !noCredits)
+      runLog.info('Agent run stopped by the user', { event: 'agent.stopped' })
     else if (error instanceof AppError)
       runLog.warn('Agent run ended', { event: 'agent.ended', reason: error.message })
     else runLog.error('Agent run crashed', { event: 'agent.crashed', ...errorFields(error) })
@@ -485,6 +506,17 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
       .catch(() => undefined)
   } finally {
     await finalize(runId, session, row)
+      .then(async () => {
+        if (!noCredits) return
+        // The last credit may run out on the final step, when the work is already done.
+        const cut = (await getRunRow(runId))?.status !== 'completed'
+        await appendAssistantNote(
+          projectId,
+          cut
+            ? '⚠ You ran out of credits, so the agent stopped here. Get more credits to continue.'
+            : '⚠ That used your last credits. Get more credits to keep building.',
+        )
+      })
       .then(async () => {
         const done = await getRunRow(runId)
         const usage = (done?.record as { usage?: Record<string, unknown> } | undefined)?.usage

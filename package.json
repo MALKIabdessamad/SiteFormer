@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "bun run format:check && bun run lint && bun run typecheck",
+    "test": "bun test tests/unit",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
     "smoke": "bun --env-file=.env run scripts/smoke-sandbox.ts"
   },
   "dependencies": {

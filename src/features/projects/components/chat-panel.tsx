@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Eye, Loader2, PanelLeftClose, Trash2 } from 'lucide-react'
 import { AgentChat, type AgentRun } from '~/features/agent'
+import { CreditsChip, useAccount } from '~/features/billing'
 import type { Project } from '../types'
 import { StatusLine } from './status-dot'
 
@@ -41,6 +42,7 @@ export function ChatPanel({
   onBusyChange,
 }: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const { account } = useAccount()
 
   return (
     <section aria-label="Chat" className="flex h-full min-h-0 flex-col">
@@ -62,6 +64,7 @@ export function ChatPanel({
           </h1>
           <StatusLine status={project.status} />
         </div>
+        <CreditsChip account={account} />
         <button
           type="button"
           onClick={onShowPreview}
@@ -138,6 +141,7 @@ export function ChatPanel({
         onConnectionLost={onConnectionLost}
         onActivity={onActivity}
         onBusyChange={onBusyChange}
+        outOfCredits={account !== null && account.credits < 1}
       />
     </section>
   )

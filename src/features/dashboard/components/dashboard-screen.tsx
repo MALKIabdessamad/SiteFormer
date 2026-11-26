@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Alert } from '~/components/ui/alert'
 import { authService, useRedirectOnSignOut } from '~/features/auth'
 import { useAttachments } from '~/features/agent/hooks/use-attachments'
@@ -114,7 +114,20 @@ export function DashboardScreen({ email }: { email: string }) {
           </div>
           {error && (
             <div className="mt-4 w-full max-w-[670px] text-center">
-              <Alert tone="error">{error}</Alert>
+              <Alert tone="error">
+                {error}
+                {/credits|plan/i.test(error) && (
+                  <>
+                    {' '}
+                    <Link
+                      to="/billing"
+                      className="font-semibold text-ink underline underline-offset-2"
+                    >
+                      See plans
+                    </Link>
+                  </>
+                )}
+              </Alert>
             </div>
           )}
         </section>

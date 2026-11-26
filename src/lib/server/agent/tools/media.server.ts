@@ -6,6 +6,8 @@ import { generateImage, toolDefinition } from '@tanstack/ai'
 import { createOpenRouterImage } from '@tanstack/ai-openrouter'
 import { z } from 'zod'
 import { serverEnv } from '../../env.server'
+import { IMAGE_TOKENS, TOKENS_PER_CREDIT } from '~/features/billing/lib/credits'
+import { chargeTokens } from '../../billing/credits.server'
 import { log } from '../../log.server'
 import { supabaseAdmin } from '../../supabase-admin.server'
 import { relativePath, ToolError, writeBytes, type SandboxSession } from '../sandbox-session.server'
@@ -51,6 +53,9 @@ export function mediaTools(session: SandboxSession) {
             ? 'Image generation is disabled.'
             : `Image budget for this run (${env.IMAGE_MAX_PER_RUN}) is used up. Reuse an existing image or use CSS/SVG.`,
       }
+    }
+    if ((await chargeTokens(session.runId, 0)) * TOKENS_PER_CREDIT < IMAGE_TOKENS) {
+      return { skipped: true, reason: 'Not enough credits left for an image. Use CSS/SVG instead.' }
     }
     session.usage.imagesGenerated += 1
     const started = Date.now()
@@ -99,6 +104,7 @@ export function mediaTools(session: SandboxSession) {
       .storage.from(SCREENSHOT_BUCKET)
       .upload(storagePath, bytes, { contentType: type.mime, upsert: false })
     const cost = (result.usage as { cost?: number } | undefined)?.cost
+    await chargeTokens(session.runId, IMAGE_TOKENS)
     log.info('Image generated', {
       event: 'image.generated',
       runId: session.runId,

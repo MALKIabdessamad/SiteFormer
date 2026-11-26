@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { Coins, Globe, LayoutTemplate, LogOut, PanelLeft, Plus, Search, X } from 'lucide-react'
 import { Logo, LogoMark } from '~/components/brand/logo'
 import { cn } from '~/lib/utils/cn'
+import { useAccount } from '~/features/billing/hooks/use-account'
 import type { ProjectSummary } from '~/features/projects/types'
 
 const itemClass =
@@ -42,6 +43,7 @@ export function AppSidebar({
   signingOut = false,
 }: AppSidebarProps) {
   const [query, setQuery] = useState('')
+  const { account } = useAccount()
   const name = email.split('@')[0] || 'You'
   const q = query.trim().toLowerCase()
   const visible = useMemo(
@@ -120,11 +122,24 @@ export function AppSidebar({
           <Plus className="h-5 w-5 shrink-0" />
           <span className={label}>New site</span>
         </button>
-        <SoonItem
-          icon={<Coins className="h-5 w-5 shrink-0" />}
-          label="Credits"
-          collapsed={collapsed}
-        />
+        <Link
+          to="/billing"
+          title={account ? `${account.planName} plan · ${account.credits} credits` : 'Credits'}
+          className={cn(itemClass, iconOnly)}
+        >
+          <Coins className="h-5 w-5 shrink-0" />
+          <span className={label}>Credits</span>
+          {!collapsed && (
+            <span
+              className={cn(
+                'ml-auto rounded-full border px-2 py-0.5 text-xs tabular-nums',
+                account && account.credits < 1 ? 'border-danger/40 text-danger' : 'text-faint',
+              )}
+            >
+              {account ? account.credits.toLocaleString('en-US') : '…'}
+            </span>
+          )}
+        </Link>
         <SoonItem
           icon={<Globe className="h-5 w-5 shrink-0" />}
           label="Domains"
@@ -194,7 +209,10 @@ export function AppSidebar({
         </span>
         <span className={cn('min-w-0 flex-1', label)}>
           <span className="block truncate text-sm font-medium">{name}</span>
-          <span className="block truncate text-xs text-faint">{email}</span>
+          <span className="block truncate text-xs text-faint">
+            {account ? `${account.planName} plan · ` : ''}
+            {email}
+          </span>
         </span>
         <button
           type="button"

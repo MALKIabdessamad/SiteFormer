@@ -1,5 +1,6 @@
+import { Link } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ArrowUp, ChevronRight, History, Loader2, PencilLine, Square } from 'lucide-react'
+import { ArrowUp, ChevronRight, Coins, History, Loader2, PencilLine, Square } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '~/features/projects/types'
@@ -26,6 +27,8 @@ type AgentChatProps = {
   onActivity: () => void
   /** The agent started or stopped working (as this chat sees it, even without Realtime). */
   onBusyChange?: (busy: boolean) => void
+  /** No credits left: the composer offers to get more instead of sending. */
+  outOfCredits?: boolean
 }
 
 export function AgentChat({
@@ -36,6 +39,7 @@ export function AgentChat({
   onConnectionLost,
   onActivity,
   onBusyChange,
+  outOfCredits = false,
 }: AgentChatProps) {
   const chat = useAgentChat(project.id)
   const [draft, setDraft] = useState('')
@@ -93,7 +97,7 @@ export function AgentChat({
     event?.preventDefault()
     const text = draft.trim()
     const uploads = attachments.ready
-    if ((!text && uploads.length === 0) || busy || attachments.uploading) return
+    if ((!text && uploads.length === 0) || busy || attachments.uploading || outOfCredits) return
     setSendError('')
     setDraft('')
     attachments.clear()
@@ -194,10 +198,20 @@ export function AgentChat({
                 >
                   {note.startsWith('✎') ? (
                     <PencilLine className="h-3 w-3 shrink-0 text-signal" aria-hidden />
+                  ) : note.startsWith('⚠') ? (
+                    <Coins className="h-3 w-3 shrink-0 text-danger" aria-hidden />
                   ) : (
                     <History className="h-3 w-3 shrink-0" aria-hidden />
                   )}
-                  <span className="truncate">{note.replace(/^(↩︎|✎)\s*/, '')}</span>
+                  <span className="whitespace-normal">{note.replace(/^(↩︎|✎|⚠)\s*/, '')}</span>
+                  {note.startsWith('⚠') && (
+                    <Link
+                      to="/billing"
+                      className="shrink-0 font-semibold text-signal hover:underline"
+                    >
+                      Get credits
+                    </Link>
+                  )}
                 </p>
               ))}
             </li>
@@ -231,6 +245,17 @@ export function AgentChat({
           attachments.add(Array.from(e.dataTransfer.files))
         }}
       >
+        {outOfCredits && !busy && (
+          <p
+            role="status"
+            className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-ink"
+          >
+            You’re out of credits.
+            <Link to="/billing" className="shrink-0 font-semibold text-signal hover:underline">
+              Get credits
+            </Link>
+          </p>
+        )}
         {attachments.notice && (
           <p className="mb-2 px-1 text-xs text-danger">{attachments.notice}</p>
         )}
@@ -291,7 +316,9 @@ export function AgentChat({
               <button
                 type="submit"
                 disabled={
-                  (!draft.trim() && attachments.ready.length === 0) || attachments.uploading
+                  (!draft.trim() && attachments.ready.length === 0) ||
+                  attachments.uploading ||
+                  outOfCredits
                 }
                 title={attachments.uploading ? 'Uploading files…' : undefined}
                 aria-label="Send"

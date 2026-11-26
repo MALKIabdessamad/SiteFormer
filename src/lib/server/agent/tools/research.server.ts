@@ -5,6 +5,8 @@
 import { toolDefinition } from '@tanstack/ai'
 import { z } from 'zod'
 import { serverEnv } from '../../env.server'
+import { SEARCH_TOKENS, TOKENS_PER_CREDIT } from '~/features/billing/lib/credits'
+import { chargeTokens } from '../../billing/credits.server'
 import { log } from '../../log.server'
 import { capText, sh, shellQuote, ToolError, type SandboxSession } from '../sandbox-session.server'
 
@@ -84,6 +86,9 @@ export function researchTools(session: SandboxSession) {
             : `Search budget for this run (${env.SEARCH_MAX_PER_RUN}) is used up. Use fetch_url on a known URL.`,
       }
     }
+    if ((await chargeTokens(session.runId, 0)) * TOKENS_PER_CREDIT < SEARCH_TOKENS) {
+      return { skipped: true, reason: 'Not enough credits left for a web search.' }
+    }
     session.usage.webSearches += 1
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -132,6 +137,7 @@ export function researchTools(session: SandboxSession) {
       .filter((s) => /^https?:\/\//.test(s.url))
       .filter((s, i, all) => all.findIndex((x) => x.url === s.url) === i)
       .slice(0, maxResults)
+    await chargeTokens(session.runId, SEARCH_TOKENS)
     log.info('Web search', {
       event: 'search.done',
       runId: session.runId,

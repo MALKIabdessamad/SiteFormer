@@ -20,6 +20,7 @@ import {
   writeText,
   type SandboxSession,
 } from '~/lib/server/agent/sandbox-session.server'
+import { restartDevServer } from '~/lib/server/agent/tools/shell.server'
 import { serverEnv } from '~/lib/server/env.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
@@ -165,6 +166,22 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
         timeoutSeconds: 30,
       })
       const [added = '0', removed = '0'] = stat.stdout.trim().split(/\s+/)
+      // Dependencies or build config changed: install / restart so the preview keeps working.
+      if (/^(package\.json|bun\.lockb?)$/.test(path)) {
+        const install = await sh(session, 'bun install 2>&1 | tail -15', { timeoutSeconds: 300 })
+        if (install.exitCode !== 0) {
+          log.warn('bun install after manual edit failed', {
+            event: 'code.install_failed',
+            projectId: data.projectId,
+            output: install.stdout.slice(-500),
+          })
+        }
+        await restartDevServer(session)
+      } else if (
+        /^(vite|tailwind|postcss)\.config\.[cm]?[jt]s$|^tsconfig.*\.json$|^\.env/.test(path)
+      ) {
+        await restartDevServer(session)
+      }
       await ensureRepo(session)
       await commitAll(session, `Manual edit: ${path}`)
       await appendAssistantNote(

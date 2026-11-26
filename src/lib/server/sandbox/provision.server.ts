@@ -1,4 +1,5 @@
 import { serverEnv } from '../env.server'
+import { appEnv } from './app-env'
 import { errorFields, log as slog } from '../log.server'
 import { BROWSER_BACKGROUND_INSTALL } from './browser-install'
 import {
@@ -111,7 +112,7 @@ async function provision(target: ProvisionTarget): Promise<void> {
     const instance = await createInstance({
       name: `siteformer-${target.projectId.slice(0, 8)}`,
       previewPort: previewPort(),
-      metadata: { project_id: target.projectId, user_id: target.userId },
+      metadata: { project_id: target.projectId, user_id: target.userId, app_env: appEnv() },
     })
     sandboxId = instance.id
     previewUrl = instance.public_ports?.find((p) => p.port === previewPort())?.url ?? null

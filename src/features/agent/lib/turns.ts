@@ -80,7 +80,7 @@ export function buildTurns(messages: ReadonlyArray<UIMessage>, streaming: boolea
     }
     // Plain notes (a restore ↩︎, a manual edit ✎) are shown as system-style lines, not replies.
     const text = textOf(message)
-    if (/^(↩︎|✎)/.test(text) && message.parts.every((p) => p.type === 'text')) {
+    if (/^(↩︎|✎|⚠)/.test(text) && message.parts.every((p) => p.type === 'text')) {
       current.notes.push(text)
       continue
     }

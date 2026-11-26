@@ -181,6 +181,16 @@ RLS: browsers can only `select` their own `projects`, `agent_runs`, `agent_memor
 `agent_uploads` (and read their own files in the private storage buckets); the
 transcript and metadata are server-only; all writes go through the server (secret key).
 
+**Plans & credits** (`plans`, `user_plans`, `credit_ledger`; migration 11): Free (50 credits,
+3 projects), Pro ($20, 1,000 credits/month, 20 projects), Max ($80, 5,000 credits/month,
+50 projects). 10,000 AI tokens = 1 credit (cached input tokens count at a tenth); an image costs
+3 credits, a web search 1. The database charges after every model step (`charge_tokens`), so a
+crash never skips usage; a run stops when the balance hits 0 and new messages need ≥ 1 credit.
+`/billing` shows plans, packs and activity. Payments are mocked: `BILLING_MODE=mock` grants
+plans/packs without payment (testing only); the default `off` shows "coming soon". To go live, a
+payment webhook calls `grantCredits()` with the provider's event id as `ref` (idempotent) and
+renews plan credits monthly.
+
 **Cleanup** (`src/lib/server/maintenance.server.ts`, 2 minutes after boot and every 6 hours):
 deletes Agent37 sandboxes and storage folders whose project no longer exists (e.g. after an
 account is deleted in Supabase) and uploads that were attached but never sent within a day.
@@ -193,7 +203,7 @@ account is deleted in Supabase) and uploads that were attached but never sent wi
 2. Variables:
    - **Required:** `SUPABASE_SECRET_KEY`, `AGENT37_API_KEY`, `OPENROUTER_API_KEY` (server-only).
    - Optional: `NAMING_MODEL`, `NAMING_FALLBACK_MODELS`, `STARTER_REPO`, `STARTER_REF`,
-     `STARTER_PORT`, `MAX_PROJECTS_PER_USER`, `AGENT_MODEL`, `IMAGE_MODEL`, `IMAGE_MAX_PER_RUN`,
+     `STARTER_PORT`, `BILLING_MODE`, `AGENT_MODEL`, `IMAGE_MODEL`, `IMAGE_MAX_PER_RUN`,
      `SEARCH_MODEL`, `SEARCH_MAX_PER_RUN`,
      `AGENT37_TEMPLATE`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (inlined into
      the browser bundle at **build** time, so redeploy after changing them). `PORT` is set by

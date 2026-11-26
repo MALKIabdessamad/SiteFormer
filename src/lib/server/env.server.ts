@@ -53,8 +53,12 @@ const schema = z.object({
   SEARCH_MODEL: z.string().min(3).default('openai/gpt-4.1-nano'),
   /** web_search calls allowed per run. 0 disables web search. */
   SEARCH_MAX_PER_RUN: z.coerce.number().int().min(0).max(10).default(3),
-  /** Cap on projects (= sandboxes) per user. */
-  MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(20),
+  /**
+   * Payments. "off": plan/credit purchases are refused ("coming soon"). "mock": purchases succeed
+   * WITHOUT payment (for testing only; never on a public deployment). Project limits per plan live
+   * in the plans table.
+   */
+  BILLING_MODE: z.enum(['off', 'mock']).default('off'),
 })
 
 export type ServerEnv = z.infer<typeof schema>

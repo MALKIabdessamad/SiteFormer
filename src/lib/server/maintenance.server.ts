@@ -3,7 +3,8 @@
  * server.ts through POST /api/agent?action=maintenance):
  *
  * - Agent37 sandboxes whose project no longer exists (e.g. the user's account was deleted:
- *   projects cascade away, but the sandbox would keep running and billing).
+ *   projects cascade away, but the sandbox would keep running and billing). Only sandboxes
+ *   tagged with this environment (see app-env.ts) are considered.
  * - Storage folders (screenshots, uploads) of projects that no longer exist.
  * - Uploads attached in the composer but never sent, after a day.
  *
@@ -13,6 +14,7 @@
 import { log } from './log.server'
 import { supabaseAdmin } from './supabase-admin.server'
 import { deleteInstance, listInstances } from './sandbox/agent37.server'
+import { appEnv } from './sandbox/app-env'
 import { removeProjectScreenshots, screenshotProjectFolders } from './agent/screenshots.server'
 import { removeProjectUploads, removeUnsentUploads, UPLOAD_BUCKET } from './agent/uploads.server'
 
@@ -47,8 +49,13 @@ async function uploadProjectFolders(): Promise<Array<string>> {
 }
 
 async function sweepSandboxes(): Promise<number> {
+  // Only sandboxes this environment created (tagged); untagged/foreign ones are never touched.
+  const mine = appEnv()
   const owned = (await listInstances()).filter(
-    (i) => UUID.test(i.metadata?.project_id ?? '') && UUID.test(i.metadata?.user_id ?? ''),
+    (i) =>
+      i.metadata?.app_env === mine &&
+      UUID.test(i.metadata?.project_id ?? '') &&
+      UUID.test(i.metadata?.user_id ?? ''),
   )
   if (!owned.length) return 0
   const live = await existingProjects(owned.map((i) => i.metadata!.project_id!))

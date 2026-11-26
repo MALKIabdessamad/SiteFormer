@@ -20,6 +20,7 @@ import {
 import { createSession } from '~/lib/server/agent/sandbox-session.server'
 import { generateProjectName } from '~/lib/server/ai/naming.server'
 import { serverEnv } from '~/lib/server/env.server'
+import { requireCredits } from '~/lib/server/billing/credits.server'
 import { log } from '~/lib/server/log.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { ownedProject, provisionTarget, saveProject } from '~/lib/server/projects.server'
@@ -75,16 +76,18 @@ export const createProject = createServerFn({ method: 'POST' })
     safely('createProject', async () => {
       const db = supabaseAdmin()
       const userId = context.user.id
-      const { MAX_PROJECTS_PER_USER } = serverEnv()
-
+      // Plan limits: projects per plan, and credits to run the first message.
+      const plan = await requireCredits(userId)
       const { count, error: countError } = await db
         .from('projects')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
       if (countError) throw countError
-      if ((count ?? 0) >= MAX_PROJECTS_PER_USER) {
+      if ((count ?? 0) >= plan.maxProjects) {
         throw new AppError(
-          `You can have up to ${MAX_PROJECTS_PER_USER} ${MAX_PROJECTS_PER_USER === 1 ? 'project' : 'projects'}. Delete one to create another.`,
+          plan.plan === 'max'
+            ? `The ${plan.planName} plan includes up to ${plan.maxProjects} projects. Delete one to create another.`
+            : `The ${plan.planName} plan includes up to ${plan.maxProjects} projects. Upgrade your plan or delete a project to create another.`,
           'limit',
         )
       }
