@@ -58,19 +58,8 @@ export type Preview = ReturnType<typeof usePreview>
 
 const href = (url: string, path: string) => new URL(path, url).toString()
 
-/**
- * The editing tools toggle, device size (one button: desktop → tablet → phone), the path bar and
- * "open in new tab".
- */
-export function PreviewControls({
-  projectId,
-  preview,
-  tools,
-}: {
-  projectId: string
-  preview: Preview
-  tools: ReactNode
-}) {
+/** Device size (one button: desktop → tablet → phone), the path bar and "open in new tab". */
+export function PreviewControls({ projectId, preview }: { projectId: string; preview: Preview }) {
   const ready = Boolean(preview.url)
   const at = Math.max(
     0,
@@ -84,7 +73,6 @@ export function PreviewControls({
       aria-label="Preview controls"
       className="flex w-full min-w-0 items-center gap-1"
     >
-      {tools}
       <button
         type="button"
         onClick={() => preview.setDevice(next.id)}

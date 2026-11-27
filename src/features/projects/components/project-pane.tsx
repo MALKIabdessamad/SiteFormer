@@ -19,8 +19,8 @@ const TABS: Array<{ id: Tab; label: string; Icon: typeof Eye }> = [
 
 /**
  * The right side of a project: a header (chat toggle and view tabs on the left, preview controls
- * in the middle, Publish on the right) over a card showing the preview or the code. On small
- * screens the preview controls wrap to a second row.
+ * in the middle, the editing tools toggle and Publish on the right) over a card showing the
+ * preview or the code. On small screens the preview controls wrap to a second row.
  */
 export function ProjectPane({
   project,
@@ -103,14 +103,11 @@ export function ProjectPane({
         </div>
         {tab === 'preview' && (
           <div className="order-last flex w-full min-w-0 lg:order-none lg:w-auto">
-            <PreviewControls
-              projectId={project.id}
-              preview={preview}
-              tools={<ToolsToggle editor={editor} disabled={!preview.url} />}
-            />
+            <PreviewControls projectId={project.id} preview={preview} />
           </div>
         )}
-        <div className="ml-auto flex shrink-0 justify-end lg:ml-0 lg:flex-1 lg:basis-0">
+        <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5 lg:ml-0 lg:flex-1 lg:basis-0">
+          {tab === 'preview' && <ToolsToggle editor={editor} disabled={!preview.url} />}
           <PublishButton />
         </div>
       </div>
