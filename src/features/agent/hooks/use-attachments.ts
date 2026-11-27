@@ -12,6 +12,10 @@ export type Attachment = {
   error?: string
 }
 
+/** Frees the previews of attachments that are gone for good. */
+export const releaseAttachments = (items: Array<Attachment> = []) =>
+  items.forEach((item) => item.preview && URL.revokeObjectURL(item.preview))
+
 /**
  * Files attached to the message being written. With a `projectId` they upload immediately;
  * without one (dashboard, project not created yet) they wait for `uploadAll(projectId)`.
@@ -102,9 +106,22 @@ export function useAttachments(projectId?: string) {
   }, [])
 
   const clear = useCallback(() => {
-    itemsRef.current.forEach((item) => item.preview && URL.revokeObjectURL(item.preview))
+    releaseAttachments(itemsRef.current)
     setItems([])
     setNotice('')
+  }, [])
+
+  /** Empties the list and hands the items over, previews and all (they go with a queued message). */
+  const take = useCallback(() => {
+    const list = itemsRef.current
+    setItems([])
+    setNotice('')
+    return list
+  }, [])
+
+  /** Puts items back (a queued message being edited). */
+  const restore = useCallback((list: Array<Attachment>) => {
+    setItems((current) => [...current, ...list])
   }, [])
 
   /** Dashboard: upload everything once the project exists. Returns the uploads that succeeded. */
@@ -127,6 +144,8 @@ export function useAttachments(projectId?: string) {
     addUploaded,
     remove,
     clear,
+    take,
+    restore,
     uploadAll,
     uploading: items.some((i) => i.status === 'uploading' || (projectId && i.status === 'pending')),
     ready: items.filter((i) => i.status === 'ready' && i.upload).map((i) => i.upload!),

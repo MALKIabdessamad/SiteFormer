@@ -1,13 +1,22 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { ProjectMode } from '~/features/projects'
 import type { Upload } from '../lib/attachments'
+import type { Attachment } from './use-attachments'
 import type { ElementRef } from '../lib/references'
 
 /** An element picked in the preview (Select): it goes with the next message as context. */
 export type Pick = { n: number; element: ElementRef }
 
-/** A message typed while the agent was busy; it sends when the agent is free. */
-export type QueuedMessage = { id: string; text: string; uploads: Array<Upload> }
+/**
+ * A message typed while the agent was busy; it sends when the agent is free. `attachments` are
+ * the composer's own items (with previews), so editing it puts them back as they were.
+ */
+export type QueuedMessage = {
+  id: string
+  text: string
+  uploads: Array<Upload>
+  attachments?: Array<Attachment>
+}
 
 export type SendOptions = { mode?: ProjectMode; uploads?: Array<Upload> }
 

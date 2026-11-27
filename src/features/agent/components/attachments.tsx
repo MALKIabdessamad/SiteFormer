@@ -83,7 +83,7 @@ export function AttachmentChips({
                 ? 'Uploading…'
                 : item.status === 'error'
                   ? 'Failed'
-                  : `${Math.max(1, Math.round(item.file.size / 1024))} KB`}
+                  : `${Math.max(1, Math.round((item.upload?.size ?? item.file.size) / 1024))} KB`}
             </span>
           </span>
           <button

@@ -9,14 +9,14 @@ import {
   Loader2,
   PencilLine,
   Square,
-  X,
+  Trash2,
 } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project, ProjectMode } from '~/features/projects'
 import { useAgentChat } from '../hooks/use-agent-chat'
-import { useAttachments } from '../hooks/use-attachments'
-import type { Composer, SendOptions } from '../hooks/use-composer'
+import { releaseAttachments, useAttachments, type Attachment } from '../hooks/use-attachments'
+import type { Composer, QueuedMessage, SendOptions } from '../hooks/use-composer'
 import { uploadParts, type Upload } from '../lib/attachments'
 import { referenceLine, splitReferences } from '../lib/references'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
@@ -151,8 +151,43 @@ export function AgentChat({
     }
   }
 
-  const enqueue = (text: string, uploads: Array<Upload>) =>
-    composer.setQueue((queue) => [...queue, { id: crypto.randomUUID(), text, uploads }])
+  const enqueue = (text: string, uploads: Array<Upload>, items?: Array<Attachment>) =>
+    composer.setQueue((queue) => [
+      ...queue,
+      { id: crypto.randomUUID(), text, uploads, attachments: items },
+    ])
+
+  /** Cancel: the queued message is deleted. */
+  const cancelQueued = (item: QueuedMessage) => {
+    composer.setQueue((queue) => queue.filter((queued) => queued.id !== item.id))
+    releaseAttachments(item.attachments)
+  }
+
+  /**
+   * Edit: the queued message goes back into the message box (before anything typed there since),
+   * with its files and its selected element.
+   */
+  const editQueued = (item: QueuedMessage) => {
+    composer.setQueue((queue) => queue.filter((queued) => queued.id !== item.id))
+    const { text, refs } = splitReferences(item.text)
+    setDraft(draft.trim() ? `${text}\n\n${draft}` : text)
+    const ref = refs[0]
+    if (ref) {
+      const { loc, tag, text: refText, path } = ref
+      composer.setPicks([{ n: 1, element: { loc, tag, text: refText, path } }])
+    }
+    attachments.restore(
+      item.attachments ??
+        item.uploads.map((upload) => ({
+          key: crypto.randomUUID(),
+          file: new File([], upload.name, { type: upload.mime }),
+          preview: null,
+          status: 'ready' as const,
+          upload,
+        })),
+    )
+    inputRef.current?.focus()
+  }
 
   /** The composer's message: the typed text, then a line for the element picked in the preview. */
   const send = async (event?: FormEvent) => {
@@ -168,9 +203,10 @@ export function AgentChat({
       .filter(Boolean)
       .join('\n')
     setDraft('')
-    attachments.clear()
     composer.setPicks([])
-    if (!free) return enqueue(text, uploads)
+    // Queued: its files stay with it (with their previews), to put back if it's edited.
+    if (!free) return enqueue(text, uploads, attachments.take())
+    attachments.clear()
     try {
       await deliver(text, uploads)
     } catch {
@@ -193,6 +229,7 @@ export function AgentChat({
     setQueue((queue) => queue.filter((item) => item.id !== nextQueued.id))
     deliverLatest
       .current(nextQueued.text, nextQueued.uploads)
+      .then(() => releaseAttachments(nextQueued.attachments))
       .catch(() => setQueue((queue) => [nextQueued, ...queue]))
       .finally(() => {
         flushing.current = false
@@ -402,28 +439,44 @@ export function AgentChat({
         )}
         {composer.queue.length > 0 && (
           <ul aria-label="Queued messages" className="mb-2 space-y-1">
-            {composer.queue.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center gap-2 rounded-xl border bg-ink/[0.02] py-1 pr-1 pl-3 text-xs text-dim"
-              >
-                <Clock className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">
-                  {splitReferences(item.text).text || item.text}
-                </span>
-                <span className="shrink-0 text-faint">Queued</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    composer.setQueue((queue) => queue.filter((queued) => queued.id !== item.id))
-                  }
-                  aria-label="Remove from queue"
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
+            {composer.queue.map((item) => {
+              const files = item.attachments?.length ?? item.uploads.length
+              return (
+                <li
+                  key={item.id}
+                  title="Sends when the agent is done"
+                  className="flex items-center gap-1 rounded-xl border bg-ink/[0.02] py-1 pr-1 pl-3 text-xs text-dim"
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </li>
-            ))}
+                  <Clock className="mr-1 h-3.5 w-3.5 shrink-0 text-faint" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">
+                    {splitReferences(item.text).text || item.text}
+                  </span>
+                  {files > 0 && (
+                    <span className="shrink-0 text-faint">
+                      {files === 1 ? '1 file' : `${files} files`}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => editQueued(item)}
+                    aria-label="Edit this message"
+                    title="Edit"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
+                  >
+                    <PencilLine className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => cancelQueued(item)}
+                    aria-label="Cancel this message"
+                    title="Cancel"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
         <div

@@ -86,7 +86,8 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   last command): the preview keeps the last version, says it updates when the AI is done, and
   reloads with the result. Pages opened in their own tab reload too.
 - **Queue and suggestions.** Messages typed while the agent works wait in a queue and send when
-  it's done. After each reply, a small model suggests up to three next steps
+  it's done; each can be cancelled (deleted) or edited (back into the message box with its files
+  and selected element). After each reply, a small model suggests up to three next steps
   (`agent_runs.suggestions`), shown as a row of chips on top of the composer.
 - **Code tab.** Everyone can read the code; editing it by hand is part of the paid plans (the
   Free plan shows it view only, and the server refuses a save).
