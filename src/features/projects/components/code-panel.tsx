@@ -43,7 +43,8 @@ export function CodePanel({
   agentBusy: boolean
   /** Changes when files may have changed (a run finished, a restore). */
   refreshSignal: number
-  onSaved: () => void
+  /** Saved: `note` is what the chat now ends with. */
+  onSaved: (note: string) => void
 }) {
   const [files, setFiles] = useState<Array<string> | null>(null)
   const [truncated, setTruncated] = useState(false)
@@ -152,7 +153,7 @@ export function CodePanel({
       setFile({ path: selected, data: { ...loaded, content: draft!, hash: result.hash } })
       setDraftOf(null)
       setNotice({ kind: 'ok', text: 'Saved. The change is in the chat and the preview.' })
-      onSaved()
+      if (result.note) onSaved(result.note)
     } catch (err) {
       setNotice({ kind: 'error', text: toErrorMessage(err) })
     } finally {

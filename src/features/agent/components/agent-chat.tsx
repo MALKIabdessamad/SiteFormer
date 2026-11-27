@@ -47,7 +47,7 @@ type AgentChatProps = {
   onModeChange: (mode: ProjectMode) => Promise<void>
   /** A mode change is being saved: sending waits for it. */
   modeSaving?: boolean
-  /** Draft, pins and queue (they outlive this component) and the send handle for the workspace. */
+  /** Draft, picked elements and queue (they outlive this component), and the workspace's handle. */
   composer: Composer
 }
 
@@ -151,20 +151,22 @@ export function AgentChat({
   const enqueue = (text: string, uploads: Array<Upload>) =>
     composer.setQueue((queue) => [...queue, { id: crypto.randomUUID(), text, uploads }])
 
-  /** The composer's message: the typed text plus one line per pinned note. */
+  /** The composer's message: the typed text, then one line per element picked in the preview. */
   const send = async (event?: FormEvent) => {
     event?.preventDefault()
-    const pins = composer.pins.map((pin) =>
-      referenceLine(pin.element, { n: pin.n, note: pin.note }),
-    )
-    const typed = draft.trim() || (pins.length ? 'Make these changes:' : '')
-    const text = [typed, pins.join('\n')].filter(Boolean).join('\n\n')
+    const typed = draft.trim()
     const uploads = attachments.ready
-    if ((!text && uploads.length === 0) || attachments.uploading || outOfCredits || modeSaving)
+    // Picked elements say where; the typed text (or a drawing) says what.
+    if ((!typed && uploads.length === 0) || attachments.uploading || outOfCredits || modeSaving)
       return
+    const picks = composer.picks.map((pick) => referenceLine(pick.element, { n: pick.n }))
+    const drawingOnly = !typed && uploads.every((u) => u.name.startsWith('Drawing on '))
+    const text = [typed || (drawingOnly ? 'Change what I marked in my drawing.' : ''), ...picks]
+      .filter(Boolean)
+      .join('\n')
     setDraft('')
     attachments.clear()
-    composer.setPins([])
+    composer.setPicks([])
     if (!free) return enqueue(text, uploads)
     try {
       await deliver(text, uploads)
@@ -173,36 +175,65 @@ export function AgentChat({
     }
   }
 
-  // Queued messages go one by one, each once the agent is free again.
+  // Queued messages go one by one, each once the agent is free again (a failed send goes back
+  // to the front of the queue).
+  const { setQueue } = composer
+  const deliverLatest = useRef(deliver)
+  useEffect(() => {
+    deliverLatest.current = deliver
+  })
   const flushing = useRef(false)
   const nextQueued = composer.queue[0]
   useEffect(() => {
     if (!nextQueued || !free || outOfCredits || modeSaving || flushing.current) return
     flushing.current = true
-    composer.setQueue((queue) => queue.filter((item) => item.id !== nextQueued.id))
-    deliver(nextQueued.text, nextQueued.uploads)
-      .catch(() => composer.setQueue((queue) => [nextQueued, ...queue]))
+    setQueue((queue) => queue.filter((item) => item.id !== nextQueued.id))
+    deliverLatest
+      .current(nextQueued.text, nextQueued.uploads)
+      .catch(() => setQueue((queue) => [nextQueued, ...queue]))
       .finally(() => {
         flushing.current = false
       })
-    // deliver/composer are stable enough; the queue head and readiness drive this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextQueued, free, outOfCredits, modeSaving])
+  }, [nextQueued, free, outOfCredits, modeSaving, setQueue])
 
   // The workspace (preview tools, fixes) sends through here: queued while the agent works.
   const external = useRef<(text: string, options?: SendOptions) => Promise<void>>(() =>
     Promise.resolve(),
   )
+  // Edits made outside the chat (Code tab, visual editor) show their note at once.
+  const appendNote = useRef<(note: string) => void>(() => undefined)
+  const attachLatest = useRef(attachments.addUploaded)
   useEffect(() => {
     external.current = async (text, { mode: wanted, uploads = [] } = {}) => {
       if (wanted && wanted !== mode) await onModeChange(wanted)
       if (!free) return enqueue(text, uploads)
       await deliver(text, uploads).catch(() => undefined)
     }
+    attachLatest.current = attachments.addUploaded
+    appendNote.current = (note) => {
+      const last = chat.messages.at(-1)
+      const lastText = last?.parts.map((p) => (p.type === 'text' ? p.content : '')).join('')
+      if (last?.role === 'assistant' && lastText === note) return // the server skips repeats too
+      chat.setMessages([
+        ...chat.messages,
+        {
+          id: `note-${crypto.randomUUID()}`,
+          role: 'assistant',
+          parts: [{ type: 'text', content: note }],
+        },
+      ])
+    }
   })
   const { register } = composer
   useEffect(
-    () => register({ send: (text, options) => external.current(text, options) }),
+    () =>
+      register({
+        send: (text, options) => external.current(text, options),
+        addNote: (note) => appendNote.current(note),
+        attach: (file, upload) => attachLatest.current(file, upload),
+        // After the chat is shown (phones show one panel at a time).
+        focus: () => requestAnimationFrame(() => inputRef.current?.focus()),
+      }),
     [register],
   )
 
@@ -395,44 +426,32 @@ export function AgentChat({
           )}
         >
           <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
-          {composer.pins.length > 0 && (
-            <ul aria-label="Pinned notes" className="mb-1 space-y-1 px-1 pt-1">
-              {composer.pins.map((pin) => (
-                <li key={pin.n} className="flex items-center gap-2">
-                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-signal text-[10px] font-bold text-signal-ink">
-                    {pin.n}
+          {composer.picks.length > 0 && (
+            <ul aria-label="Picked elements" className="mb-1 flex flex-wrap gap-1.5 px-1 pt-1">
+              {composer.picks.map((pick) => (
+                <li
+                  key={pick.n}
+                  title={`${pick.element.text} · ${pick.element.loc}`}
+                  className="flex max-w-full items-center gap-1.5 rounded-full border bg-ink/[0.03] py-0.5 pr-0.5 pl-1 text-xs"
+                >
+                  <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-signal px-1 text-[10px] font-bold text-signal-ink">
+                    {pick.n}
                   </span>
-                  <span
-                    className="max-w-[7rem] shrink-0 truncate font-mono text-[11px] text-faint"
-                    title={`${pin.element.text} · ${pin.element.loc}`}
-                  >
-                    &lt;{pin.element.tag}&gt; {pin.element.text}
+                  <span className="shrink-0 font-mono text-[11px] text-faint">
+                    &lt;{pick.element.tag}&gt;
                   </span>
-                  <input
-                    value={pin.note}
-                    maxLength={500}
-                    onChange={(e) =>
-                      composer.setPins((pins) =>
-                        pins.map((p) => (p.n === pin.n ? { ...p, note: e.target.value } : p)),
-                      )
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        void send()
-                      }
-                    }}
-                    placeholder="What should change here?"
-                    aria-label={`Note for pin ${pin.n}`}
-                    className="h-7 min-w-0 flex-1 rounded-lg bg-ink/[0.04] px-2 text-xs outline-none placeholder:text-faint focus:bg-ink/[0.07]"
-                  />
+                  <span className="max-w-[9rem] min-w-0 truncate text-dim">
+                    {pick.element.text}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => composer.setPins((pins) => pins.filter((p) => p.n !== pin.n))}
-                    aria-label={`Remove pin ${pin.n}`}
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
+                    onClick={() =>
+                      composer.setPicks((picks) => picks.filter((p) => p.n !== pick.n))
+                    }
+                    aria-label={`Remove element ${pick.n}`}
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-3 w-3" />
                   </button>
                 </li>
               ))}
@@ -469,9 +488,13 @@ export function AgentChat({
                 ? 'Waiting for the sandbox…'
                 : busy
                   ? 'Type your next message (it sends when the agent is done)'
-                  : mode === 'chat'
-                    ? 'Ask anything about your project…'
-                    : 'Ask for a change…'
+                  : composer.picks.length > 0
+                    ? mode === 'chat'
+                      ? 'Ask about the picked elements…'
+                      : 'What should change there?'
+                    : mode === 'chat'
+                      ? 'Ask anything about your project…'
+                      : 'Ask for a change…'
             }
             className="block min-h-12 w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-sm leading-5 outline-none placeholder:text-faint"
           />
@@ -490,11 +513,11 @@ export function AgentChat({
                 <Square className="h-3.5 w-3.5 fill-current" />
               </button>
             )}
-            {(!busy || draft.trim() || composer.pins.length > 0) && (
+            {(!busy || draft.trim()) && (
               <button
                 type="submit"
                 disabled={
-                  (!draft.trim() && attachments.ready.length === 0 && composer.pins.length === 0) ||
+                  (!draft.trim() && attachments.ready.length === 0) ||
                   attachments.uploading ||
                   outOfCredits ||
                   modeSaving

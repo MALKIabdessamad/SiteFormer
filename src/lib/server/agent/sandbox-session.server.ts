@@ -32,7 +32,13 @@ export type SandboxSession = {
   /** The project's uploads by id (maps "sf-upload:<id>" parts to names and project paths). */
   uploads: Map<
     string,
-    { name: string; kind: 'image' | 'document'; mime: string; project_path: string | null }
+    {
+      name: string
+      kind: 'image' | 'document'
+      mime: string
+      project_path: string | null
+      purpose: 'asset' | 'sketch'
+    }
   >
   /** Images attached to THIS run's message, shown to the model on every call of the run. */
   attachedImages: Map<string, { mime: string; base64: string }>

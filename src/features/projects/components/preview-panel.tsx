@@ -58,8 +58,19 @@ export type Preview = ReturnType<typeof usePreview>
 
 const href = (url: string, path: string) => new URL(path, url).toString()
 
-/** Device size (one button: desktop → tablet → phone), the path bar and "open in new tab". */
-export function PreviewControls({ projectId, preview }: { projectId: string; preview: Preview }) {
+/**
+ * The editing tools toggle, device size (one button: desktop → tablet → phone), the path bar and
+ * "open in new tab".
+ */
+export function PreviewControls({
+  projectId,
+  preview,
+  tools,
+}: {
+  projectId: string
+  preview: Preview
+  tools: ReactNode
+}) {
   const ready = Boolean(preview.url)
   const at = Math.max(
     0,
@@ -73,6 +84,7 @@ export function PreviewControls({ projectId, preview }: { projectId: string; pre
       aria-label="Preview controls"
       className="flex w-full min-w-0 items-center gap-1"
     >
+      {tools}
       <button
         type="button"
         onClick={() => preview.setDevice(next.id)}
@@ -117,6 +129,7 @@ export function PreviewFrame({
   frameKey,
   frameRef,
   onFrameLoad,
+  frameOverlay,
   overlay,
   retrying,
   onRetry,
@@ -127,7 +140,9 @@ export function PreviewFrame({
   frameKey: string
   frameRef: RefObject<HTMLIFrameElement | null>
   onFrameLoad: () => void
-  /** Floating editing tools over the frame. */
+  /** Laid exactly over the page itself (the drawing layer). */
+  frameOverlay?: ReactNode
+  /** Floating editing tools over the preview area. */
   overlay?: ReactNode
   retrying: boolean
   onRetry: () => void
@@ -187,6 +202,7 @@ export function PreviewFrame({
             className="block h-full w-full border-0 bg-white"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
           />
+          {frameOverlay}
           {loaded !== frameKey && (
             <div
               className="pointer-events-none absolute inset-0 grid place-items-center bg-paper/50"

@@ -121,7 +121,9 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
         )
       }
       const path = relativePath(absolute)
-      if (current.content === data.content) return { saved: false, hash: data.baseHash }
+      if (current.content === data.content) {
+        return { saved: false, hash: data.baseHash, note: null }
+      }
 
       await writeText(session, absolute, data.content)
       const stat = await sh(session, `git diff --numstat -- ${shellQuote(absolute)} 2>/dev/null`, {
@@ -148,10 +150,8 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
       }
       await ensureRepo(session)
       await commitAll(session, `Manual edit: ${path}`)
-      await appendAssistantNote(
-        data.projectId,
-        `✎ You edited ${path} by hand (+${Number(added) || 0} −${Number(removed) || 0} lines). Saved as a checkpoint.`,
-      )
+      const note = `✎ You edited ${path} by hand (+${Number(added) || 0} −${Number(removed) || 0} lines). Saved as a checkpoint.`
+      await appendAssistantNote(data.projectId, note)
       log.info('File edited by the user', {
         event: 'code.saved',
         projectId: data.projectId,
@@ -160,6 +160,7 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
         added: Number(added) || 0,
         removed: Number(removed) || 0,
       })
-      return { saved: true, hash: sha1(data.content) }
+      // The chat shows the note right away (the same text the transcript now ends with).
+      return { saved: true, hash: sha1(data.content), note }
     }),
   )

@@ -1,14 +1,7 @@
 import { expect, test } from 'bun:test'
-import { hexToOklch, oklchToHex } from '../../src/features/projects/lib/colors'
-import { currentStyle, setStyle } from '../../src/features/projects/lib/tailwind-classes'
-import { readRootVars, writeRootVars } from '../../src/features/projects/lib/theme-css'
-import {
-  EditError,
-  parseLoc,
-  replaceClasses,
-  replaceImageSrc,
-  replaceText,
-} from '../../src/lib/server/visual-edit/jsx-edit'
+import { referenceLine, splitReferences } from '../../src/features/agent/lib/references'
+import { fixRequest, parseBridgeEvent } from '../../src/features/projects/lib/preview-bridge'
+import { EditError, parseLoc, replaceText } from '../../src/lib/server/visual-edit/jsx-edit'
 
 const FILE = `import { cn } from "@/lib/utils";
 export function Hero({ title }: { title: string }) {
@@ -52,67 +45,56 @@ test('refuses text that comes from code or changed meanwhile', () => {
   expect(() => replaceText(FILE, at(9, 7), 'Hello', 'Bye')).toThrow(EditError)
   expect(() => replaceText(FILE, at(5, 7), 'Something else', 'Bye')).toThrow(EditError)
   expect(() => replaceText(FILE, at(40, 1), 'x', 'y')).toThrow(EditError)
+  // Right line, wrong column (the file changed): never guess.
+  expect(() => replaceText(FILE, at(5, 8), 'Your next project.', 'Bye')).toThrow(EditError)
   expect(() => replaceText('const x = <div', at(1, 11), 'x', 'y')).toThrow(EditError)
 })
 
-test('changes classes: plain strings, single quotes, cn() and a missing className', () => {
-  const bigger = (classes: string) => setStyle(classes, 'fontSize', 'text-5xl')
-  expect(replaceClasses(FILE, at(5, 7), bigger)).toContain(
-    '<h1 className="text-5xl font-semibold text-foreground">',
-  )
-  // Responsive size dropped so the new size shows everywhere; quote style kept.
-  expect(replaceClasses(FILE, at(6, 7), bigger)).toContain("<p className='mt-3 text-5xl'>")
-  expect(replaceClasses(FILE, at(10, 7), bigger)).toContain(
-    '<span className={cn("px-2 text-5xl", title && "underline")}>',
+test('a fix request carries the error once, with the page', () => {
+  const text = fixRequest({
+    kind: 'runtime',
+    message: 'Boom',
+    stack: 'Error: Boom\n    at Hero (index.tsx:3:9)',
+    path: '/about',
+  })
+  expect(text).toBe(
+    'The preview shows an error on page /about. Find the cause and fix it.\n\n```\nError: Boom\n    at Hero (index.tsx:3:9)\n```',
   )
   expect(
-    replaceClasses(FILE, at(12, 7), (c) => setStyle(c, 'textColor', 'text-primary')),
-  ).toContain('<a className="text-primary" href="/">Go</a>')
-  expect(() =>
-    replaceClasses('const x = <div className={styles.box} />', at(1, 11), bigger),
-  ).toThrow(EditError)
+    fixRequest({ kind: 'build', message: 'Unexpected token', stack: '', path: '/' }),
+  ).toContain('a build error on page /.')
 })
 
-test('swaps an image source', () => {
-  expect(replaceImageSrc(FILE, at(11, 7), '/uploads/new.png')).toContain(
-    '<img src="/uploads/new.png" alt="" />',
-  )
-  expect(() => replaceImageSrc('const x = <img src={hero} />', at(1, 11), '/a.png')).toThrow(
-    EditError,
-  )
+test('picked elements travel as numbered lines and come back as chips', () => {
+  const element = { loc: 'src/routes/index.tsx:5:7', tag: 'h1', text: 'Say "hi"\n now', path: '/' }
+  const line = referenceLine(element, { n: 2 })
+  expect(line).toBe('⌖2 <h1> "Say ”hi” now" at src/routes/index.tsx:5:7 on /')
+  const { text, refs } = splitReferences(`Make these bigger\n${line}`)
+  expect(text).toBe('Make these bigger')
+  expect(refs).toEqual([
+    { n: 2, tag: 'h1', text: 'Say ”hi” now', loc: element.loc, path: '/', note: '' },
+  ])
+  // Older messages carried a note per element; they still show.
+  expect(splitReferences(`${line} — bigger`).refs[0]?.note).toBe('bigger')
 })
 
-test('tailwind groups: one value, state variants kept', () => {
-  expect(setStyle('text-sm md:text-lg hover:text-xl font-bold', 'fontSize', 'text-2xl')).toBe(
-    'text-2xl hover:text-xl font-bold',
-  )
-  expect(setStyle('text-foreground text-sm', 'textColor', 'text-red-500')).toBe(
-    'text-red-500 text-sm',
-  )
-  expect(setStyle('px-4 py-2 rounded', 'padding', 'p-6')).toBe('p-6 rounded')
-  expect(setStyle('rounded-lg shadow', 'borderRadius', null)).toBe('shadow')
-  expect(setStyle('', 'textAlign', 'text-center')).toBe('text-center')
-  expect(currentStyle('text-left md:text-3xl text-xl', 'fontSize')).toBe('text-xl')
-  expect(currentStyle('text-left', 'fontSize')).toBeNull()
-  expect(() => setStyle('', 'fontSize', 'text-red-500')).toThrow()
-})
-
-test('colors round-trip between hex and oklch', () => {
-  expect(hexToOklch('#ffffff')).toBe('oklch(1 0 0)')
-  expect(hexToOklch('#000000')).toBe('oklch(0 0 0)')
-  expect(hexToOklch('#3b82f6')).toBe('oklch(0.623 0.188 259.8)')
-  for (const hex of ['#3b82f6', '#e11d48', '#10b981', '#fafaf9']) {
-    expect(oklchToHex(hexToOklch(hex))).toBe(hex)
-  }
-  expect(oklchToHex('oklch(62.3% 0.188 259.8deg / 50%)')).toBe('#3b82f6')
-  expect(oklchToHex('#fff')).toBeNull()
-})
-
-test('theme variables: read and write only :root', () => {
-  const css = `/* :root and .dark blocks */\n:root {\n  --radius: 0.5rem;\n  --primary: oklch(0.25 0 0);\n}\n.dark {\n  --primary: oklch(0.9 0 0);\n}\n`
-  expect(readRootVars(css)).toEqual({ radius: '0.5rem', primary: 'oklch(0.25 0 0)' })
-  const out = writeRootVars(css, { primary: 'oklch(0.6 0.2 260)', radius: '1rem', missing: 'x' })
-  expect(out).toContain(':root {\n  --radius: 1rem;\n  --primary: oklch(0.6 0.2 260);\n}')
-  expect(out).toContain('.dark {\n  --primary: oklch(0.9 0 0);')
-  expect(() => writeRootVars(css, { primary: 'red; } body {' })).toThrow()
+test('bridge messages are checked before use', () => {
+  const element = { loc: 'src/a.tsx:1:1', tag: 'p', text: 'Hi', path: '/' }
+  expect(parseBridgeEvent({ sf: 1, type: 'pick', n: 1, element })).toEqual({
+    type: 'pick',
+    n: 1,
+    element,
+  })
+  expect(parseBridgeEvent({ sf: 1, type: 'pick', n: -1, element })).toBeNull()
+  expect(
+    parseBridgeEvent({ sf: 1, type: 'pick', n: 1, element: { ...element, tag: 1 } }),
+  ).toBeNull()
+  expect(
+    parseBridgeEvent({ sf: 1, type: 'viewport', scrollX: 0, scrollY: 640, path: '/a' }),
+  ).toEqual({ type: 'viewport', scrollX: 0, scrollY: 640, path: '/a' })
+  expect(
+    parseBridgeEvent({ sf: 1, type: 'viewport', scrollX: 1.5, scrollY: 0, path: '/' }),
+  ).toBeNull()
+  expect(parseBridgeEvent({ sf: 2, type: 'updated' })).toBeNull()
+  expect(parseBridgeEvent({ sf: 1, type: 'unknown' })).toBeNull()
 })

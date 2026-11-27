@@ -1,19 +1,16 @@
 /**
- * Direct edits from the visual editor: find a JSX element by the location the preview reported
- * (data-sf-loc="src/routes/index.tsx:23:9") and change its text, classes or image source with
- * minimal, exact string edits (the rest of the file stays byte for byte the same).
+ * Text typed over an element in the preview: find the JSX element by the location the preview
+ * reported (data-sf-loc="src/routes/index.tsx:23:9") and replace its text with a minimal, exact
+ * string edit (the rest of the file stays byte for byte the same).
  *
- * When the code doesn't hold a plain value to change (text or classes computed in code), an
- * EditError explains it so the editor can offer the AI instead.
+ * When the code doesn't hold plain text there (it's computed in code), an EditError explains it
+ * so the editor can offer the AI instead.
  */
 import { parse } from '@babel/parser'
 
 export class EditError extends Error {}
 
 const TEXT_IN_CODE = 'This text comes from code, so it can’t be edited here. Ask the AI instead.'
-const STYLE_IN_CODE =
-  'This element’s style is set in code, so it can’t be changed here. Ask the AI instead.'
-const IMAGE_IN_CODE = 'This image is set in code, so it can’t be swapped here. Ask the AI instead.'
 
 export type SourceLoc = { file: string; line: number; column: number }
 
@@ -67,10 +64,11 @@ function findElement(source: string, loc: SourceLoc): AstNode {
       onLine.push(node)
     }
   })
-  const column = (node: AstNode) => child(node, 'openingElement').loc.start.column + 1
-  const found =
-    onLine.find((node) => column(node) === loc.column) ??
-    (onLine.length === 1 ? onLine[0] : undefined)
+  // Exact position only: if the file changed since the page was rendered, a near match could be
+  // a different element.
+  const found = onLine.find(
+    (node) => child(node, 'openingElement').loc.start.column + 1 === loc.column,
+  )
   if (!found) {
     throw new EditError('This element moved in the code. Reload the preview and try again.')
   }
@@ -113,69 +111,4 @@ export function replaceText(source: string, loc: SourceLoc, before: string, afte
     }
   }
   throw new EditError(TEXT_IN_CODE)
-}
-
-function attribute(element: AstNode, names: string[]): AstNode | undefined {
-  return children(child(element, 'openingElement'), 'attributes').find(
-    (attr) =>
-      attr.type === 'JSXAttribute' && names.includes(String(child(attr, 'name')['name'] ?? '')),
-  )
-}
-
-const CLASS_HELPERS = new Set(['cn', 'clsx', 'cx', 'classNames', 'twMerge'])
-
-/** Rewrites an element's class list with `update` (a plain className, or cn("…", …)'s first string). */
-export function replaceClasses(
-  source: string,
-  loc: SourceLoc,
-  update: (classes: string) => string,
-): string {
-  const element = findElement(source, loc)
-  const attr = attribute(element, ['className', 'class'])
-  if (!attr) {
-    const next = update('')
-    if (!next) return source
-    const name = child(child(element, 'openingElement'), 'name')
-    return source.slice(0, name.end) + ` className="${next}"` + source.slice(name.end)
-  }
-  const value = attr['value'] as AstNode | null
-  if (value?.type === 'StringLiteral') {
-    const quote = source[value.start] === "'" ? "'" : '"'
-    const next = update(String(value['value']))
-    if (next.includes(quote)) return splice(source, value, `{${JSON.stringify(next)}}`)
-    return splice(source, value, `${quote}${next}${quote}`)
-  }
-  if (value?.type === 'JSXExpressionContainer') {
-    const expression = child(value, 'expression')
-    if (expression.type === 'StringLiteral') {
-      return splice(source, expression, JSON.stringify(update(String(expression['value']))))
-    }
-    if (expression.type === 'TemplateLiteral' && children(expression, 'expressions').length === 0) {
-      const raw = String((children(expression, 'quasis')[0]?.['value'] as { raw?: string })?.raw)
-      return splice(source, expression, `\`${update(raw).replace(/[`$\\]/g, '\\$&')}\``)
-    }
-    const callee = expression.type === 'CallExpression' ? child(expression, 'callee') : null
-    const first = expression.type === 'CallExpression' ? children(expression, 'arguments')[0] : null
-    if (
-      callee?.type === 'Identifier' &&
-      CLASS_HELPERS.has(String(callee['name'])) &&
-      first?.type === 'StringLiteral'
-    ) {
-      return splice(source, first, JSON.stringify(update(String(first['value']))))
-    }
-  }
-  throw new EditError(STYLE_IN_CODE)
-}
-
-/** Points an image at a new `src` (a plain string in the code). */
-export function replaceImageSrc(source: string, loc: SourceLoc, src: string): string {
-  const element = findElement(source, loc)
-  const attr = attribute(element, ['src'])
-  const value = attr?.['value'] as AstNode | null | undefined
-  if (value?.type === 'StringLiteral') return splice(source, value, JSON.stringify(src))
-  if (value?.type === 'JSXExpressionContainer') {
-    const expression = child(value, 'expression')
-    if (expression.type === 'StringLiteral') return splice(source, expression, JSON.stringify(src))
-  }
-  throw new EditError(IMAGE_IN_CODE)
 }

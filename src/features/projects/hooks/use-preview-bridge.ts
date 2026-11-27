@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parseBridgeEvent, type BridgeCommand, type BridgeEvent } from '../lib/preview-bridge'
 
+type Viewport = { scrollX: number; scrollY: number; path: string }
+
 /**
  * Talks to the editor bridge inside the preview frame (only with that frame, only with the
  * preview's origin). `frameKey` changes whenever the frame reloads: the connection and anything
@@ -20,9 +22,9 @@ export function usePreviewBridge(
     }
   }, [previewUrl])
   const [readyFor, setReadyFor] = useState<string | null>(null)
-  const [theme, setTheme] = useState<Record<string, string>>({})
   const handler = useRef(onEvent)
   const currentKey = useRef(frameKey)
+  const viewportWaiters = useRef<Array<(viewport: Viewport) => void>>([])
   useEffect(() => {
     handler.current = onEvent
     currentKey.current = frameKey
@@ -43,20 +45,38 @@ export function usePreviewBridge(
       if (!event) return
       if (event.type === 'here') return post({ type: 'hello' })
       if (event.type === 'ready') setReadyFor(currentKey.current)
-      if (event.type === 'ready' || event.type === 'updated') setTheme(event.theme)
+      if (event.type === 'viewport') {
+        const waiters = viewportWaiters.current
+        viewportWaiters.current = []
+        waiters.forEach((resolve) => resolve(event))
+        return
+      }
       handler.current(event)
     }
     window.addEventListener('message', listen)
     return () => window.removeEventListener('message', listen)
   }, [origin, post])
 
+  /** Where the page is scrolled to (null if the bridge doesn't answer quickly). */
+  const viewport = useCallback(
+    () =>
+      new Promise<Viewport | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 1500)
+        viewportWaiters.current.push((value) => {
+          clearTimeout(timer)
+          resolve(value)
+        })
+        post({ type: 'viewport' })
+      }),
+    [post],
+  )
+
   return {
     frame,
     /** The bridge in the current page answered (older projects get it on their next open). */
     connected: readyFor === frameKey,
-    /** The site's theme colors (for real swatches). */
-    theme,
     post,
+    viewport,
     /** Call when the frame loaded: greets the bridge (it also announces itself). */
     hello: useCallback(() => post({ type: 'hello' }), [post]),
   }

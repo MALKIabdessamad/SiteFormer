@@ -26,7 +26,9 @@ import { BROWSER_DIR, BROWSER_ENV, BROWSER_INSTALL_SCRIPT } from '../../sandbox/
 /** Runner executed with node inside the sandbox. Input: base64 JSON job. Output: one JSON line. */
 const RUNNER = String.raw`
 const { chromium } = require('playwright-core')
-const job = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf8'))
+// The job comes base64-encoded as the argument, or in a file ("@/tmp/job") when it's large.
+const arg = process.argv[2]
+const job = JSON.parse(Buffer.from(arg.startsWith('@') ? require('node:fs').readFileSync(arg.slice(1), 'utf8') : arg, 'base64').toString('utf8'))
 const cap = (s, n) => (s.length > n ? s.slice(0, n) + '…' : s)
 const fs = require('node:fs')
 async function optimize() {
@@ -52,8 +54,41 @@ async function optimize() {
     await browser.close()
   }
 }
+async function sketch() {
+  // The page as the user saw it (same size and scroll), with their strokes drawn on top.
+  const browser = await chromium.launch()
+  try {
+    const page = await browser.newPage({ viewport: { width: job.width, height: job.height }, deviceScaleFactor: 1 })
+    await page.goto(job.url, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => null)
+    await page.evaluate(([x, y]) => window.scrollTo(x, y), [job.scrollX, job.scrollY])
+    await page.waitForTimeout(300)
+    await page.evaluate((strokes) => {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('style', 'position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:none')
+      for (const points of strokes) {
+        const line = document.createElementNS(ns, 'polyline')
+        // A single point (a dot) needs a second one to be drawn.
+        const all = points.length === 1 ? [points[0], [points[0][0] + 0.1, points[0][1]]] : points
+        line.setAttribute('points', all.map((p) => p[0] + ',' + p[1]).join(' '))
+        line.setAttribute('fill', 'none')
+        line.setAttribute('stroke', '#f43f5e')
+        line.setAttribute('stroke-width', '4')
+        line.setAttribute('stroke-linecap', 'round')
+        line.setAttribute('stroke-linejoin', 'round')
+        svg.appendChild(line)
+      }
+      document.documentElement.appendChild(svg)
+    }, job.strokes)
+    const shot = await page.screenshot({ type: 'jpeg', quality: 72 })
+    process.stdout.write(JSON.stringify({ ok: true, screenshot: shot.toString('base64') }))
+  } finally {
+    await browser.close()
+  }
+}
 ;(async () => {
   if (job.mode === 'optimize') return optimize()
+  if (job.mode === 'sketch') return sketch()
   const out = { ok: true, consoleErrors: [], failedRequests: [], steps: [] }
   const browser = await chromium.launch()
   try {
@@ -243,6 +278,45 @@ async function runBrowser(session: SandboxSession, job: BrowserJob): Promise<Bro
   } catch {
     throw new ToolError(`Browser failed: ${capText(result.stderr || result.stdout, 400)}`)
   }
+}
+
+/** The user's drawing over the preview: strokes in CSS pixels of the visible page. */
+export type SketchJob = {
+  path: string
+  width: number
+  height: number
+  scrollX: number
+  scrollY: number
+  strokes: Array<Array<[number, number]>>
+}
+
+/** A JPEG of the page as the user saw it, with their drawing on top (for the chat). */
+export async function renderSketch(session: SandboxSession, job: SketchJob): Promise<Buffer> {
+  await ensureBrowser(session)
+  const url = new URL(job.path, `http://localhost:${session.previewPort}`).href
+  const input = Buffer.from(JSON.stringify({ ...job, url, mode: 'sketch' })).toString('base64')
+  // Large drawings don't fit on a command line: stage the job in a file.
+  const jobFile = `/tmp/sf-sketch-${crypto.randomUUID()}.json`
+  for (let i = 0; i < input.length; i += 64_000) {
+    await sh(session, `printf %s ${shellQuote(input.slice(i, i + 64_000))} >> ${jobFile}`, {
+      timeoutSeconds: 30,
+      cwd: '/home/node',
+    })
+  }
+  const runnerB64 = Buffer.from(RUNNER).toString('base64')
+  const result = await sh(
+    session,
+    `printf %s ${shellQuote(runnerB64)} | base64 -d > ${BROWSER_DIR}/runner.cjs && cd ${BROWSER_DIR} && ${BROWSER_ENV} node runner.cjs @${jobFile}; rm -f ${jobFile}`,
+    { timeoutSeconds: 90, cwd: '/home/node' },
+  )
+  let parsed: { ok?: boolean; screenshot?: string; error?: string }
+  try {
+    parsed = JSON.parse(result.stdout) as typeof parsed
+  } catch {
+    throw new ToolError(`Browser failed: ${capText(result.stderr || result.stdout, 400)}`)
+  }
+  if (!parsed.ok || !parsed.screenshot) throw new ToolError(parsed.error ?? 'No screenshot.')
+  return Buffer.from(parsed.screenshot, 'base64')
 }
 
 /** Stores a screenshot for the chat UI and queues it for the model's next call. */

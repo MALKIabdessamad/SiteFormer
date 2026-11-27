@@ -1,6 +1,7 @@
 /**
  * Elements picked in the preview travel in the message as one line each, which the AI reads and
- * the chat shows as a chip:  ⌖2 <h1> "Your next project." at src/routes/index.tsx:23:9 on / — make it bigger
+ * the chat shows as a chip:  ⌖2 <h1> "Your next project." at src/routes/index.tsx:23:9 on /
+ * (messages from before the tools were simplified may end a line with " — a note").
  */
 
 export type ElementRef = { loc: string; tag: string; text: string; path: string }
@@ -14,14 +15,10 @@ const excerpt = (text: string) => {
   return flat.length > 80 ? `${flat.slice(0, 79)}…` : flat
 }
 
-/** One line for the message (`n` numbers annotation pins; `note` is what to do there). */
-export function referenceLine(
-  element: ElementRef,
-  { n, note }: { n?: number; note?: string } = {},
-): string {
+/** One line for the message (`n` matches the number shown on the element in the preview). */
+export function referenceLine(element: ElementRef, { n }: { n?: number } = {}): string {
   const path = element.path.replace(/\s/g, '%20') || '/'
-  const tail = note?.trim() ? ` — ${note.replace(/\s+/g, ' ').trim()}` : ''
-  return `⌖${n ?? ''} <${element.tag}> "${excerpt(element.text)}" at ${element.loc} on ${path}${tail}`
+  return `⌖${n ?? ''} <${element.tag}> "${excerpt(element.text)}" at ${element.loc} on ${path}`
 }
 
 /** A message's own text and the elements it points at. */

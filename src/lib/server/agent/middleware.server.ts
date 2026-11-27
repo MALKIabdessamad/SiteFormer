@@ -184,6 +184,9 @@ export function attachmentsMiddleware(session: SandboxSession): ChatMiddleware {
     // Chat mode doesn't copy attachments into the project: documents come inline.
     const text = session.attachedTexts.get(id)
     if (text !== undefined) return `[Attached file "${upload.name}"]\n${text}`
+    if (upload.purpose === 'sketch') {
+      return `[${upload.name.replace(/\.\w+$/, '')}: a screenshot of the preview with the user's marks drawn on it${shown ? ' (shown below)' : ''}. It shows what they mean; it is not a file in the site.]`
+    }
     if (upload.kind === 'image' && !upload.project_path)
       return `[Attached image "${upload.name}"${shown ? ' (shown below)' : ''}]`
     return upload.kind === 'image'

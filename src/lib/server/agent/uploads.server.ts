@@ -38,6 +38,8 @@ export type UploadRow = {
   mime: string
   size: number
   project_path: string | null
+  /** asset: a file for the site. sketch: the preview with the user's drawing (AI context only). */
+  purpose: 'asset' | 'sketch'
   /** The run this upload was sent with (null = attached but not sent yet). */
   run_id: string | null
   created_at: string
@@ -101,6 +103,7 @@ export async function saveUpload(input: {
   projectId: string
   name: string
   bytes: Uint8Array
+  purpose?: UploadRow['purpose']
 }): Promise<UploadRow> {
   const { userId, projectId, bytes } = input
   if (bytes.byteLength === 0) throw new AppError('That file is empty.')
@@ -143,6 +146,7 @@ export async function saveUpload(input: {
       kind: detected.kind,
       mime: detected.mime,
       size: bytes.byteLength,
+      purpose: input.purpose ?? 'asset',
     })
     .select('*')
     .single<UploadRow>()

@@ -1,53 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  referenceLine,
-  uploadFile,
-  type Composer,
-  type ElementRef,
-  type SendOptions,
-  type Upload,
-} from '~/features/agent'
+import { referenceLine, type Composer, type ElementRef, type SendOptions } from '~/features/agent'
 import { toErrorMessage } from '~/lib/utils/errors'
-import {
-  editElementStyle,
-  editElementText,
-  replaceElementImage,
-  type VisualEditResult,
-} from '../api/visual-edit.functions'
-import {
-  fixRequest,
-  type BridgeEvent,
-  type EditorTool,
-  type ElementInfo,
-  type PageError,
-} from '../lib/preview-bridge'
-import { setStyle, type StyleGroup } from '../lib/tailwind-classes'
+import { captureSketch, editElementText } from '../api/visual-edit.functions'
+import { fixRequest, type BridgeEvent, type PageError } from '../lib/preview-bridge'
 import type { Preview } from '../components/preview-panel'
 import { usePreviewBridge } from './use-preview-bridge'
 
-export type AskOptions = SendOptions & { element?: ElementRef }
+/** Select: pick elements for the chat. Text: edit text in place. Draw: sketch on the page. */
+export type EditorTool = 'select' | 'text' | 'draw'
 
-/** A direct edit couldn't be made; the AI can do it instead. */
-export type Notice = {
-  message: string
-  retry?: { text: string; element: ElementRef; uploads?: Array<Upload> }
-}
+/** A drawn line, in CSS pixels of the visible page. */
+export type Stroke = Array<[number, number]>
 
-const toRef = ({ loc, tag, text, path }: ElementInfo): ElementRef => ({ loc, tag, text, path })
-
-const STYLE_WORDS: Record<StyleGroup, string> = {
-  textColor: 'text color',
-  backgroundColor: 'background',
-  fontSize: 'font size',
-  fontWeight: 'font weight',
-  textAlign: 'text alignment',
-  borderRadius: 'corner rounding',
-  padding: 'padding',
-}
+/** Something the tools couldn't do directly; the AI can do it instead. */
+type Notice = { message: string; retry?: { text: string; element: ElementRef } }
 
 /**
- * The preview's editing tools: pick elements (then edit text/styles/images directly, or ask the
- * AI), pin notes for the chat, and offer a fix when the page shows an error.
+ * The preview's editing tools (collapsed until opened): pick elements to refer to in the chat,
+ * edit text in place (saved straight into the code), or draw on the page and attach the drawing
+ * to the next message. Also offers a fix when the page shows an error.
  */
 export function useVisualEditor({
   projectId,
@@ -57,77 +28,68 @@ export function useVisualEditor({
   agentBusy,
   onAsk,
   onEdited,
+  onShowChat,
 }: {
   projectId: string
   preview: Preview
   frameKey: string
   composer: Composer
   agentBusy: boolean
-  /** Sends a message to the AI (from the selection card, a fix, a fallback). */
+  /** Sends a message to the AI (a fix, or a text edit that has to go through the AI). */
   onAsk: (text: string, options?: SendOptions) => void
-  /** A direct edit was saved (the chat shows a note). */
-  onEdited: () => void
+  /** A text edit was saved: `note` is what the chat now ends with. */
+  onEdited: (note: string) => void
+  /** Brings the chat into view (phones show one panel at a time). */
+  onShowChat: () => void
 }) {
-  const [tool, setToolState] = useState<EditorTool>('none')
-  const [selection, setSelection] = useState<{ frame: string; element: ElementInfo } | null>(null)
+  const [open, setOpen] = useState(false)
+  const [chosen, setChosen] = useState<EditorTool | null>(null)
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState<'saving' | 'capturing' | null>(null)
+  const [drawing, setDrawing] = useState<{ view: string; strokes: Array<Stroke> } | null>(null)
   const [pageError, setPageError] = useState<{ frame: string; error: PageError } | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [pending, setPending] = useState(0)
-  const chain = useRef<Promise<void>>(Promise.resolve())
-  const styleTimers = useRef(new Map<StyleGroup, ReturnType<typeof setTimeout>>())
+  const edits = useRef<Promise<void>>(Promise.resolve())
 
-  const selected = selection?.frame === frameKey ? selection.element : null
+  // Text can't be edited while the agent is changing the code.
+  const tool = chosen === 'text' && agentBusy ? null : chosen
   // Errors mid-run are expected (files half written); offer a fix once the agent is done.
   const error = pageError?.frame === frameKey && !agentBusy ? pageError.error : null
+  // A drawing belongs to the page as it was drawn on: a reload or another device size drops it.
+  const view = `${frameKey}:${preview.device}`
+  const strokes = drawing?.view === view ? drawing.strokes : []
+  const setStrokes = (update: (all: Array<Stroke>) => Array<Stroke>) =>
+    setDrawing((d) => ({ view, strokes: update(d?.view === view ? d.strokes : []) }))
 
-  /** Runs direct edits one after another; a refused one reloads the page to drop the preview. */
-  const save = useCallback(
-    (work: () => Promise<VisualEditResult>, fallback: (message: string) => Notice) => {
-      setPending((n) => n + 1)
-      chain.current = chain.current.then(async () => {
-        try {
-          const result = await work()
-          if (result.status === 'unsupported') {
-            setNotice(fallback(result.message))
-            preview.reload()
-          } else if (result.status === 'saved') onEdited()
-        } catch (err) {
-          setNotice({ message: toErrorMessage(err) })
-          preview.reload()
-        } finally {
-          setPending((n) => n - 1)
-        }
-      })
-    },
-    [preview, onEdited],
-  )
-
-  const swapImage = (element: ElementInfo, file: File) => {
-    let upload: Upload | undefined
-    save(
-      async () => {
-        upload = await uploadFile(projectId, file)
-        return replaceElementImage({ data: { projectId, loc: element.loc, uploadId: upload.id } })
-      },
-      (message) => ({
-        message,
-        ...(upload && {
-          retry: {
-            text: 'Use the attached image here.',
-            element: toRef(element),
-            uploads: [upload],
-          },
-        }),
-      }),
-    )
-  }
-
-  const setTool = (next: EditorTool) => {
-    setToolState(next)
-    setSelection(null)
+  const setTool = (next: EditorTool | null) => {
+    setChosen(next)
     setNotice(null)
     setEditing(false)
+    if (next !== 'draw') setDrawing(null)
+  }
+
+  /** Saves typed text; when it can't be saved directly, the page reloads and the AI is offered. */
+  const saveText = (loc: string, before: string, after: string) => {
+    const element: ElementRef = { loc, tag: 'text', text: before, path: preview.shownPath }
+    edits.current = edits.current.then(async () => {
+      setBusy('saving')
+      try {
+        const result = await editElementText({ data: { projectId, loc, before, after } })
+        if (result.status === 'saved') onEdited(result.note)
+        if (result.status === 'unsupported') {
+          setNotice({
+            message: result.message,
+            retry: { text: `Change this text to “${after}”.`, element },
+          })
+          preview.reload()
+        }
+      } catch (err) {
+        setNotice({ message: toErrorMessage(err) })
+        preview.reload()
+      } finally {
+        setBusy(null)
+      }
+    })
   }
 
   const bridge = usePreviewBridge(preview.url, frameKey, (event: BridgeEvent) => {
@@ -136,44 +98,23 @@ export function useVisualEditor({
       case 'location':
         preview.observe(event.path)
         break
-      case 'select':
-        setSelection({ frame: frameKey, element: event.element })
-        if (!event.refresh) {
-          setNotice(null)
-          setEditing(false)
-        }
+      case 'pick':
+        composer.setPicks((picks) =>
+          picks.some((p) => p.n === event.n)
+            ? picks
+            : [...picks, { n: event.n, element: event.element }],
+        )
         break
       case 'editing':
+        setNotice(null)
         setEditing(true)
         break
       case 'text-cancel':
         setEditing(false)
         break
-      case 'text-commit': {
+      case 'text-commit':
         setEditing(false)
-        const element: ElementRef = selected
-          ? toRef(selected)
-          : { loc: event.loc, tag: 'element', text: event.before, path: preview.shownPath }
-        save(
-          () =>
-            editElementText({
-              data: { projectId, loc: event.loc, before: event.before, after: event.after },
-            }),
-          (message) => ({
-            message,
-            retry: { text: `Change this text to “${event.after}”.`, element },
-          }),
-        )
-        break
-      }
-      case 'pin':
-        composer.setPins((pins) => [
-          ...pins,
-          { n: event.n, element: toRef(event.element), note: '' },
-        ])
-        break
-      case 'image-drop':
-        swapImage(event.element, event.file)
+        saveText(event.loc, event.before, event.after)
         break
       case 'error':
         setPageError({ frame: frameKey, error: event })
@@ -182,95 +123,117 @@ export function useVisualEditor({
         setPageError(null)
         break
       case 'escape':
-        setTool('none')
+        setTool(null)
         break
     }
   })
-  const { connected, post } = bridge
+  const { connected, post, viewport } = bridge
 
-  // The page follows the chosen tool (again after every reload).
+  // What a click in the page does follows the chosen tool (again after every reload).
+  const pageMode = tool === 'select' ? 'select' : tool === 'text' ? 'text' : 'none'
   useEffect(() => {
-    if (connected) post({ type: 'mode', mode: tool })
-  }, [connected, post, tool])
+    if (connected) post({ type: 'mode', mode: pageMode })
+  }, [connected, post, pageMode])
 
-  // Pins removed in the chat (or sent) disappear from the page.
-  const pinNumbers = composer.pins.map((pin) => pin.n).join(',')
+  // Elements removed from the chat box (or sent) lose their outline in the page.
+  const pickNumbers = composer.picks.map((pick) => pick.n).join(',')
   useEffect(() => {
     if (!connected) return
-    const keep = pinNumbers ? pinNumbers.split(',').map(Number) : []
-    post({ type: 'pins', keep, next: Math.max(0, ...keep) + 1 })
-  }, [connected, post, pinNumbers])
+    const keep = pickNumbers ? pickNumbers.split(',').map(Number) : []
+    post({ type: 'picks', keep, next: Math.max(0, ...keep) + 1 })
+  }, [connected, post, pickNumbers])
 
+  // A tool is on but the page never answered (e.g. it loaded while its dev server restarted with
+  // the editor support): after a few seconds, offer a reload.
+  const [stalledFor, setStalledFor] = useState<string | null>(null)
+  const waiting = tool !== null && !connected
   useEffect(() => {
-    const timers = styleTimers.current
-    return () => timers.forEach((timer) => clearTimeout(timer))
+    if (!waiting) return
+    const timer = setTimeout(() => setStalledFor(frameKey), 6000)
+    return () => clearTimeout(timer)
+  }, [waiting, frameKey])
+
+  const close = useCallback(() => {
+    setOpen(false)
+    setChosen(null)
+    setDrawing(null)
+    setNotice(null)
+    setEditing(false)
   }, [])
+
+  const showChat = () => {
+    onShowChat()
+    composer.focus()
+  }
 
   return {
     bridge,
+    open,
+    toggle: () => (open ? close() : setOpen(true)),
+    close,
     tool,
-    setTool,
-    selected,
+    /** Picks a tool (picking the active one again turns it off). */
+    choose: (next: EditorTool) => setTool(tool === next ? null : next),
     editing,
-    saving: pending > 0,
+    busy,
+    stalled: waiting && stalledFor === frameKey,
+    reload: preview.reload,
     error,
     dismissError: () => setPageError(null),
-    notice,
-    dismissNotice: () => setNotice(null),
-    deselect: () => {
-      setSelection(null)
-      post({ type: 'deselect' })
-    },
-    editText: () => post({ type: 'edit-text' }),
-    /** Shows a style at once in the page and saves it after a short pause. */
-    setElementStyle: (group: StyleGroup, value: string | null) => {
-      if (!selected) return
-      const next = setStyle(selected.classes, group, value)
-      const before = new Set(selected.classes.split(/\s+/).filter(Boolean))
-      const after = new Set(next.split(/\s+/).filter(Boolean))
-      post({
-        type: 'classes',
-        add: [...after].filter((c) => !before.has(c)),
-        remove: [...before].filter((c) => !after.has(c)),
-      })
-      setSelection({ frame: frameKey, element: { ...selected, classes: next } })
-      const element = toRef(selected)
-      clearTimeout(styleTimers.current.get(group))
-      styleTimers.current.set(
-        group,
-        setTimeout(
-          () =>
-            save(
-              () => editElementStyle({ data: { projectId, loc: element.loc, group, value } }),
-              (message) => ({
-                message,
-                retry: {
-                  text: `Change its ${STYLE_WORDS[group]}${value ? ` to Tailwind ${value}` : ' back to the default'}.`,
-                  element,
-                },
-              }),
-            ),
-          450,
-        ),
-      )
-    },
-    swapImage,
-    /** The theme was saved (from the theme panel). */
-    themeSaved: onEdited,
-    /** Asks the AI, pointing at an element when given. */
-    ask: (text: string, { element, ...options }: AskOptions = {}) => {
-      onAsk(
-        [text.trim(), element ? referenceLine(element) : ''].filter(Boolean).join('\n\n'),
-        options,
-      )
-      setNotice(null)
-    },
     fix: () => {
       if (!error) return
       onAsk(fixRequest(error), { mode: 'build' })
       setPageError(null)
     },
-    toRef,
+    notice,
+    dismissNotice: () => setNotice(null),
+    askInstead: () => {
+      if (!notice?.retry) return
+      onAsk(`${notice.retry.text}\n${referenceLine(notice.retry.element)}`)
+      setNotice(null)
+    },
+    showChat,
+    strokes,
+    addStroke: (stroke: Stroke) => setStrokes((all) => [...all, stroke]),
+    undoStroke: () => setStrokes((all) => all.slice(0, -1)),
+    clearStrokes: () => setDrawing(null),
+    /** Scrolls the page under the drawing layer (only before drawing: lines stay where drawn). */
+    scrollPage: (x: number, y: number) => {
+      if (strokes.length === 0 && (x || y)) post({ type: 'scroll', x, y })
+    },
+    /** Renders the page with the drawing on it and attaches it to the message being written. */
+    attachDrawing: async () => {
+      const frame = bridge.frame.current
+      if (!frame || strokes.length === 0) return
+      setBusy('capturing')
+      setNotice(null)
+      try {
+        const view = await viewport()
+        const result = await captureSketch({
+          data: {
+            projectId,
+            path: view?.path ?? preview.shownPath,
+            width: Math.round(frame.clientWidth),
+            height: Math.round(frame.clientHeight),
+            scrollX: view?.scrollX ?? 0,
+            scrollY: view?.scrollY ?? 0,
+            strokes,
+          },
+        })
+        const bytes = Uint8Array.from(atob(result.image), (c) => c.charCodeAt(0))
+        composer.attach(
+          new File([bytes], result.upload.name, { type: result.upload.mime }),
+          result.upload,
+        )
+        setDrawing(null)
+        setChosen(null)
+        showChat()
+      } catch (err) {
+        setNotice({ message: toErrorMessage(err) })
+      } finally {
+        setBusy(null)
+      }
+    },
   }
 }
 

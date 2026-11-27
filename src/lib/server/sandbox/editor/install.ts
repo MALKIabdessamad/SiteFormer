@@ -14,20 +14,24 @@ export const EDITOR_VERSION = createHash('sha1')
   .slice(0, 12)
 
 // Adds `siteformer()` first in vite.config.ts's plugins (its transform must run before the
-// router's code splitting, so element locations point at the real file).
+// router's code splitting, so element locations point at the real file). The result is only
+// written if it still parses, so an unusual config is left alone rather than broken.
 const WIRE = `const fs = require("fs");
 const file = "vite.config.ts";
-let s = fs.readFileSync(file, "utf8");
+const s = fs.readFileSync(file, "utf8");
 const at = s.search(/plugins\\s*:\\s*\\[/);
 if (at !== -1 && !s.includes("siteformer/vite-plugin")) {
   const open = s.indexOf("[", at) + 1;
-  s = 'import { siteformer } from "./.siteformer/vite-plugin";\\n' + s.slice(0, open) + "\\n    siteformer()," + s.slice(open);
-  fs.writeFileSync(file, s);
+  const next = 'import { siteformer } from "./.siteformer/vite-plugin";\\n' + s.slice(0, open) + "\\n    siteformer()," + s.slice(open);
+  try {
+    new Bun.Transpiler({ loader: "ts" }).transformSync(next);
+    fs.writeFileSync(file, next);
+  } catch {}
 }`
 
 const file = (name: string, content: string) =>
   [
-    `base64 -d > .siteformer/${name} <<'SF_EOF'`,
+    `base64 -d > .siteformer/${name}.tmp <<'SF_EOF'`,
     Buffer.from(content)
       .toString('base64')
       .replace(/.{1,76}/g, '$&\n')
@@ -35,16 +39,23 @@ const file = (name: string, content: string) =>
     'SF_EOF',
   ].join('\n')
 
-/** Shell, run in the site's folder with bun on PATH. Never fails the caller. */
+/**
+ * Shell, run in the site's folder with bun on PATH. Never fails the caller (the editor is
+ * optional): files are written to temp names and moved into place, and VERSION is written last,
+ * so an interrupted install is simply redone next time.
+ */
 export function editorInstallScript(): string {
   return [
-    `if [ "$(cat .siteformer/VERSION 2>/dev/null)" != "${EDITOR_VERSION}" ]; then`,
+    `if [ "$(cat .siteformer/VERSION 2>/dev/null)" != "${EDITOR_VERSION}" ]; then (`,
+    '  set -e',
     '  mkdir -p .siteformer',
     file('vite-plugin.ts', pluginSource),
     file('bridge.js', bridgeSource),
+    '  mv .siteformer/vite-plugin.ts.tmp .siteformer/vite-plugin.ts',
+    '  mv .siteformer/bridge.js.tmp .siteformer/bridge.js',
     `  echo ${EDITOR_VERSION} > .siteformer/VERSION`,
-    'fi',
-    'if [ -f vite.config.ts ] && ! grep -q "siteformer/vite-plugin" vite.config.ts; then',
+    ') || true; fi',
+    'if [ -f vite.config.ts ] && [ -f .siteformer/vite-plugin.ts ] && ! grep -q "siteformer/vite-plugin" vite.config.ts; then',
     `  bun -e '${WIRE.replace(/'/g, `'\\''`)}' || true`,
     'fi',
   ].join('\n')

@@ -79,6 +79,20 @@ export function useAttachments(projectId?: string) {
     [projectId, start],
   )
 
+  /** A file that is already stored (e.g. a drawing on the preview): ready to send at once. */
+  const addUploaded = useCallback((file: File, upload: Upload) => {
+    if (itemsRef.current.length >= MAX_ATTACHMENTS) {
+      setNotice(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
+      return
+    }
+    setNotice('')
+    const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : null
+    setItems((list) => [
+      ...list,
+      { key: crypto.randomUUID(), file, preview, status: 'ready', upload },
+    ])
+  }, [])
+
   const remove = useCallback((key: string) => {
     setItems((list) => {
       const item = list.find((i) => i.key === key)
@@ -110,6 +124,7 @@ export function useAttachments(projectId?: string) {
     items,
     notice,
     add,
+    addUploaded,
     remove,
     clear,
     uploadAll,

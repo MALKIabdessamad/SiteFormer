@@ -62,16 +62,20 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   in `agent_runs.mode`). Chat runs get read-only tools only (read/search files, preview,
   screenshots, research), make no checkpoints and don't copy attachments into the project;
   the server enforces it, not just the UI.
-- **Visual editor** (tools pill over the preview):
-  - _Select_ an element, then edit its text in place (double-click), its color, background, size,
-    weight, alignment, corners and padding (Tailwind classes), or swap an image. These are
-    direct, exact code edits (Babel finds the element by its source line): instant, no AI, no
-    credits, committed as a checkpoint and noted in the chat. When the value comes from code,
-    the editor offers _Ask AI_ instead. The card also has an _Ask AI to change this_ box.
-  - _Annotate_: pin numbered notes on elements; they travel with the next message as lines like
-    `⌖1 <h1> "…" at src/routes/index.tsx:23:9 on / — note` (shown as chips in the chat).
-  - _Theme_: the site's colors (oklch in `src/styles.css`) and corners, previewed live.
-  - Page errors show a calm card with _Fix it_; the path bar follows link clicks in the preview.
+- **Editing tools** (closed by default; the pencil-ruler button in the preview header opens a
+  small bar over the preview with three tools):
+  - _Select_: click elements on the page; each gets a numbered badge and a chip in the message
+    box, and travels with the next message as a line like
+    `⌖1 <h1> "…" at src/routes/index.tsx:23:9 on /` (the exact JSX location; shown as a chip in
+    the chat).
+  - _Edit text_: click text on the page and type; Enter saves it straight into the code (Babel
+    finds the element by its source line: exact, no AI, no credits), committed as a checkpoint
+    and noted in the chat. When the text comes from code, the editor offers _Ask AI_ instead.
+  - _Draw_: draw on the page, then _Add to chat_. The sandbox's browser renders the same page at
+    the same size and scroll with the lines on it, and that image is attached to the message
+    (`agent_uploads.purpose = 'sketch'`: shown to the model, never copied into the site).
+  - Separately, page errors show a calm card with _Fix it_, and the path bar follows link clicks
+    in the preview.
 - **Queue and suggestions.** Messages typed while the agent works wait in a queue and send when
   it's done. After each reply, a small model suggests up to three next steps
   (`agent_runs.suggestions`).
@@ -124,11 +128,11 @@ src/
 │   ├── auth/                   # Sign in/up/reset: AuthScreen, authService, requireUser guard
 │   ├── dashboard/              # DashboardScreen, AppSidebar, PromptBox, MobileTopBar
 │   ├── projects/               # ProjectScreen, preview + code tabs, server fns (create/open/
-│   │                           # retry/delete, code read/save, site pages, visual edits,
-│   │                           # theme), the visual editor (preview tools, bridge hook), RLS
+│   │                           # retry/delete, code read/save, site pages, text edits,
+│   │                           # drawings), the editing tools (bar, bridge hook), RLS
 │   │                           # reads + Realtime; Publish is a placeholder (coming soon)
 │   ├── agent/                  # AgentChat, tool steps, attachments, checkpoints (restore),
-│   │                           # runs (useAgentRuns), composer (pins, queue); element
+│   │                           # runs (useAgentRuns), composer (picks, queue); element
 │   │                           # reference lines; lib/upload-ref.ts is shared with the server
 │   └── billing/                # BillingScreen, CreditsChip, useAccount, (mock) checkout fns;
 │                               # lib/credits.ts (credit math) is shared with the server

@@ -39,16 +39,6 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   }, [finishedRuns])
 
   const reconnectChat = useCallback(() => setChatKey((k) => k + 1), [])
-  const afterSave = useCallback(() => {
-    setChatKey((k) => k + 1) // show the "you edited" note
-  }, [])
-  // Visual edits note themselves in the chat; reload it once they pause (not on every click).
-  const editPause = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const afterVisualEdit = useCallback(() => {
-    clearTimeout(editPause.current)
-    editPause.current = setTimeout(() => setChatKey((k) => k + 1), 2500)
-  }, [])
-  useEffect(() => () => clearTimeout(editPause.current), [])
 
   // The preview tools talk to the AI through the chat (shown, so the user sees it go).
   const ask = (text: string, options?: SendOptions) => {
@@ -176,10 +166,14 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           reloadSignal={previewKey}
           retrying={busy === 'retry'}
           onRetry={() => void retry()}
-          onSaved={afterSave}
+          onSaved={composer.addNote}
           composer={composer}
           onAsk={ask}
-          onVisualEdit={afterVisualEdit}
+          onVisualEdit={composer.addNote}
+          onShowChat={() => {
+            setMobileView('chat')
+            setChatCollapsed(false)
+          }}
           chatToggle={
             <>
               <button

@@ -6,7 +6,7 @@ import type { Project } from '../types'
 import { CodePanel } from './code-panel'
 import { useVisualEditor } from '../hooks/use-visual-editor'
 import { PreviewControls, PreviewFrame, usePreview } from './preview-panel'
-import { PreviewTools } from './preview-tools'
+import { DrawLayer, PreviewTools, ToolsToggle } from './preview-tools'
 import { PublishButton } from './publish-button'
 
 type Tab = 'preview' | 'code'
@@ -32,6 +32,7 @@ export function ProjectPane({
   composer,
   onAsk,
   onVisualEdit,
+  onShowChat,
   chatToggle,
 }: {
   project: Project
@@ -39,12 +40,15 @@ export function ProjectPane({
   reloadSignal: number
   retrying: boolean
   onRetry: () => void
-  onSaved: () => void
+  /** A Code tab save: `note` is what the chat now ends with. */
+  onSaved: (note: string) => void
   composer: Composer
   /** Sends a message to the AI (from the preview's editing tools). */
   onAsk: (text: string, options?: SendOptions) => void
-  /** A direct edit in the preview was saved. */
-  onVisualEdit: () => void
+  /** A direct edit in the preview was saved: `note` is what the chat now ends with. */
+  onVisualEdit: (note: string) => void
+  /** Brings the chat into view (phones show one panel at a time; desktop may have it collapsed). */
+  onShowChat: () => void
   /** Buttons that bring the chat back (phone: switch view; desktop: reopen the collapsed chat). */
   chatToggle: ReactNode
 }) {
@@ -60,6 +64,7 @@ export function ProjectPane({
     agentBusy,
     onAsk,
     onEdited: onVisualEdit,
+    onShowChat,
   })
 
   const choose = (next: Tab) => {
@@ -98,7 +103,11 @@ export function ProjectPane({
         </div>
         {tab === 'preview' && (
           <div className="order-last flex w-full min-w-0 lg:order-none lg:w-auto">
-            <PreviewControls projectId={project.id} preview={preview} />
+            <PreviewControls
+              projectId={project.id}
+              preview={preview}
+              tools={<ToolsToggle editor={editor} disabled={!preview.url} />}
+            />
           </div>
         )}
         <div className="ml-auto flex shrink-0 justify-end lg:ml-0 lg:flex-1 lg:basis-0">
@@ -114,13 +123,23 @@ export function ProjectPane({
             frameKey={frameKey}
             frameRef={editor.bridge.frame}
             onFrameLoad={editor.bridge.hello}
+            frameOverlay={
+              editor.open &&
+              editor.tool === 'draw' &&
+              editor.bridge.connected && (
+                <DrawLayer
+                  strokes={editor.strokes}
+                  onStroke={editor.addStroke}
+                  onScroll={editor.scrollPage}
+                  disabled={editor.busy !== null}
+                />
+              )
+            }
             overlay={
               <PreviewTools
                 editor={editor}
-                projectId={project.id}
-                mode={project.mode}
                 agentBusy={agentBusy}
-                pinCount={composer.pins.length}
+                pickCount={composer.picks.length}
               />
             }
             retrying={retrying}

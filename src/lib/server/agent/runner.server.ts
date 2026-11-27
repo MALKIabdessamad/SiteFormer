@@ -358,14 +358,19 @@ async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
     .filter((u) => u.run_id === row.id)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
   if (mine.length) {
-    // Build: the files become part of the site. Chat: the project must not change, so the
-    // model gets them straight from storage (images shown, text inline).
-    const files =
-      row.mode === 'build'
-        ? await copyUploadsIntoProject(session, mine, (bytes, upload) =>
+    // Build: files become part of the site. Chat: the project must not change, so the model gets
+    // them straight from storage (images shown, text inline). Sketches (the preview with the
+    // user's drawing) are only context and never go into the site.
+    const assets = mine.filter((u) => u.purpose !== 'sketch')
+    const sketches = mine.filter((u) => u.purpose === 'sketch')
+    const files = [
+      ...(row.mode === 'build'
+        ? await copyUploadsIntoProject(session, assets, (bytes, upload) =>
             optimizeImage(session, bytes, upload.mime),
           )
-        : mine
+        : assets),
+      ...sketches,
+    ]
     if (row.mode === 'build') uploads = await projectUploads(row.project_id)
     for (const upload of files) {
       if (upload.kind === 'document') {
@@ -395,7 +400,13 @@ async function prepareAttachments(session: SandboxSession, row: AgentRunRow) {
   session.uploads = new Map(
     [...uploads].map(([id, u]) => [
       id,
-      { name: u.name, kind: u.kind, mime: u.mime, project_path: u.project_path },
+      {
+        name: u.name,
+        kind: u.kind,
+        mime: u.mime,
+        project_path: u.project_path,
+        purpose: u.purpose,
+      },
     ]),
   )
 }
@@ -584,7 +595,7 @@ async function offerNextSteps(run: AgentRunRow) {
     const reply = [...messages].reverse().find((m) => m.role === 'assistant' && m.content)
     const text = typeof reply?.content === 'string' ? reply.content : ''
     if (!text.trim()) return
-    const suggestions = await suggestNextSteps(run.prompt, text)
+    const suggestions = await suggestNextSteps(run.prompt, text, run.mode)
     if (!suggestions.length) return
     await updateRun(run.id, { suggestions })
     await chargeTokens(run.id, SUGGESTION_TOKENS).catch(() => undefined)
