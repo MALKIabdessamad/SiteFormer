@@ -121,6 +121,19 @@
   animation: loading-bar 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Scrolls sideways without showing a scrollbar (rows of chips). */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Content swapped in place (the editing tools card) fades in. */
+@utility fade-in {
+  animation: appear 0.2s ease-out both;
+}
+
 /* Shows only if it is still there after a moment (quick checks never flash on screen). */
 @keyframes appear {
   from {
@@ -134,7 +147,8 @@
   animation: appear 0.3s ease-out 0.8s both;
 }
 @media (prefers-reduced-motion: reduce) {
-  .loading-bar {
+  .loading-bar,
+  .fade-in {
     animation: none;
   }
   .appear-late {

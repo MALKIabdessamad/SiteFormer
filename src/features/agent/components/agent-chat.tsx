@@ -20,6 +20,7 @@ import type { Composer, SendOptions } from '../hooks/use-composer'
 import { uploadParts, type Upload } from '../lib/attachments'
 import { referenceLine, splitReferences } from '../lib/references'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
+import { ElementChip } from './element-chip'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
 import { buildTurns, type Segment } from '../lib/turns'
 import { Markdown } from './markdown'
@@ -83,6 +84,8 @@ export function AgentChat({
   // The server takes the next message once the last run is fully done (checkpoint written).
   const lastRun = runs.at(-1)
   const free = !busy && (!lastRun || isSettledRun(lastRun))
+  // One-click next steps for the last reply, on top of the composer.
+  const suggestions = (free && lastRun?.suggestions) || []
   const turns = useMemo(() => buildTurns(chat.messages, streaming), [chat.messages, streaming])
 
   useEffect(() => {
@@ -151,7 +154,7 @@ export function AgentChat({
   const enqueue = (text: string, uploads: Array<Upload>) =>
     composer.setQueue((queue) => [...queue, { id: crypto.randomUUID(), text, uploads }])
 
-  /** The composer's message: the typed text, then one line per element picked in the preview. */
+  /** The composer's message: the typed text, then a line for the element picked in the preview. */
   const send = async (event?: FormEvent) => {
     event?.preventDefault()
     const typed = draft.trim()
@@ -159,7 +162,7 @@ export function AgentChat({
     // Picked elements say where; the typed text (or a drawing) says what.
     if ((!typed && uploads.length === 0) || attachments.uploading || outOfCredits || modeSaving)
       return
-    const picks = composer.picks.map((pick) => referenceLine(pick.element, { n: pick.n }))
+    const picks = composer.picks.map((pick) => referenceLine(pick.element))
     const drawingOnly = !typed && uploads.every((u) => u.name.startsWith('Drawing on '))
     const text = [typed || (drawingOnly ? 'Change what I marked in my drawing.' : ''), ...picks]
       .filter(Boolean)
@@ -292,21 +295,6 @@ export function AgentChat({
                   ) : null,
                 )}
               </div>
-              {finished && run && run.id === latestRunId && free && run.suggestions?.length ? (
-                <div aria-label="Suggested next steps" className="flex flex-wrap gap-1.5 pt-0.5">
-                  {run.suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      onClick={() => void external.current(suggestion)}
-                      disabled={outOfCredits}
-                      className="rounded-full border bg-ink/[0.02] px-3 py-1.5 text-left text-xs text-dim transition-colors hover:border-signal/50 hover:text-ink disabled:opacity-50"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
               {finished && run && (
                 <ReplyActions
                   projectId={project.id}
@@ -393,6 +381,25 @@ export function AgentChat({
             {sendError || chat.error?.message}
           </p>
         )}
+        {suggestions.length > 0 && (
+          <div
+            aria-label="Suggested next steps"
+            className="-mx-3 mb-2 no-scrollbar flex gap-1.5 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)] px-3"
+          >
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => void external.current(suggestion)}
+                disabled={outOfCredits}
+                title={suggestion}
+                className="h-8 max-w-[16rem] shrink-0 truncate rounded-full border bg-raised px-3 text-xs text-dim transition-colors hover:border-signal/50 hover:text-ink disabled:opacity-50"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
         {composer.queue.length > 0 && (
           <ul aria-label="Queued messages" className="mb-2 space-y-1">
             {composer.queue.map((item) => (
@@ -427,35 +434,16 @@ export function AgentChat({
         >
           <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
           {composer.picks.length > 0 && (
-            <ul aria-label="Picked elements" className="mb-1 flex flex-wrap gap-1.5 px-1 pt-1">
+            <div aria-label="Selected element" className="mb-1 flex flex-wrap gap-1.5 px-1 pt-1">
               {composer.picks.map((pick) => (
-                <li
+                <ElementChip
                   key={pick.n}
+                  tag={pick.element.tag}
                   title={`${pick.element.text} · ${pick.element.loc}`}
-                  className="flex max-w-full items-center gap-1.5 rounded-full border bg-ink/[0.03] py-0.5 pr-0.5 pl-1 text-xs"
-                >
-                  <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-signal px-1 text-[10px] font-bold text-signal-ink">
-                    {pick.n}
-                  </span>
-                  <span className="shrink-0 font-mono text-[11px] text-faint">
-                    &lt;{pick.element.tag}&gt;
-                  </span>
-                  <span className="max-w-[9rem] min-w-0 truncate text-dim">
-                    {pick.element.text}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      composer.setPicks((picks) => picks.filter((p) => p.n !== pick.n))
-                    }
-                    aria-label={`Remove element ${pick.n}`}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </li>
+                  onRemove={() => composer.setPicks([])}
+                />
               ))}
-            </ul>
+            </div>
           )}
           <label htmlFor="agent-input" className="sr-only">
             Message the agent
@@ -490,8 +478,8 @@ export function AgentChat({
                   ? 'Type your next message (it sends when the agent is done)'
                   : composer.picks.length > 0
                     ? mode === 'chat'
-                      ? 'Ask about the picked elements…'
-                      : 'What should change there?'
+                      ? 'Ask about the selected element…'
+                      : 'Ask to change the selected element…'
                     : mode === 'chat'
                       ? 'Ask anything about your project…'
                       : 'Ask for a change…'
@@ -500,8 +488,8 @@ export function AgentChat({
           />
           <div className="mt-1 flex items-center gap-1">
             <AttachButton onFiles={attachments.add} count={attachments.items.length} />
-            <ModeMenu mode={mode} disabled={modeSaving} onChange={onModeChange} />
             <span className="flex-1" />
+            <ModeMenu mode={mode} disabled={modeSaving} onChange={onModeChange} />
             {busy && (
               <button
                 type="button"
@@ -550,20 +538,15 @@ function UserMessage({ text }: { text: string }) {
       <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
         {body}
         {refs.length > 0 && (
-          <ul className={cn('space-y-1 whitespace-normal', body && 'mt-2')}>
+          <div className={cn('flex flex-wrap gap-1.5 whitespace-normal', body && 'mt-2')}>
             {refs.map((ref, i) => (
-              <li key={i} className="text-xs" title={ref.loc}>
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-signal/20 px-1 text-[10px] font-bold text-signal">
-                    {ref.n ?? '⌖'}
-                  </span>
-                  <span className="shrink-0 font-mono text-faint">&lt;{ref.tag}&gt;</span>
-                  <span className="min-w-0 truncate text-dim">{ref.text}</span>
-                </div>
-                {ref.note && <p className="mt-0.5 pl-[22px] text-ink">{ref.note}</p>}
-              </li>
+              <ElementChip
+                key={i}
+                tag={ref.tag}
+                title={`${ref.text}${ref.note ? ` — ${ref.note}` : ''} · ${ref.loc}`}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </div>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Eye, Loader2, PanelLeftClose, Trash2 } from 'lucide-react'
 import { AgentChat, type AgentRun, type Composer } from '~/features/agent'
-import { CreditsChip, useAccount } from '~/features/billing'
+import { CreditsChip, type Account } from '~/features/billing'
 import { toErrorMessage } from '~/lib/utils/errors'
 import { setProjectMode } from '../api/projects.functions'
 import type { ProjectMode } from '../lib/constants'
@@ -30,6 +30,8 @@ type ChatPanelProps = {
   /** Re-reads the project (after its mode was saved). */
   onProjectChanged: () => Promise<unknown>
   composer: Composer
+  /** The user's plan and credits (null while loading). */
+  account: Account | null
 }
 
 /** Conversation column: project header + the coding agent's chat. */
@@ -48,9 +50,9 @@ export function ChatPanel({
   onBusyChange,
   onProjectChanged,
   composer,
+  account,
 }: ChatPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const { account } = useAccount()
   // The chosen mode shows at once; it's saved on the project (projects.mode) in the background.
   const [pendingMode, setPendingMode] = useState<ProjectMode | null>(null)
   const [modeError, setModeError] = useState('')

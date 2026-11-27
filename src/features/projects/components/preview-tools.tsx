@@ -1,9 +1,11 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 import {
   Loader2,
   MousePointer2,
   Pencil,
   PencilRuler,
+  Redo2,
   TriangleAlert,
   Type,
   Undo2,
@@ -18,6 +20,9 @@ const INK = '#f43f5e'
 
 const round =
   'grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 md:pointer-fine:h-8 md:pointer-fine:w-8'
+const quiet = 'text-dim hover:bg-ink/[0.06] hover:text-ink disabled:hover:bg-transparent'
+const pill =
+  'inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40'
 
 /** The header button that opens and closes the editing tools (closed by default). */
 export function ToolsToggle({ editor, disabled }: { editor: VisualEditor; disabled: boolean }) {
@@ -29,12 +34,7 @@ export function ToolsToggle({ editor, disabled }: { editor: VisualEditor; disabl
       title="Editing tools"
       disabled={disabled}
       onClick={editor.toggle}
-      className={cn(
-        round,
-        editor.open
-          ? 'btn-sculpted'
-          : 'text-dim hover:bg-ink/[0.06] hover:text-ink disabled:hover:bg-transparent',
-      )}
+      className={cn(round, editor.open ? 'btn-sculpted' : quiet)}
     >
       <PencilRuler className="h-4 w-4" aria-hidden />
     </button>
@@ -42,45 +42,307 @@ export function ToolsToggle({ editor, disabled }: { editor: VisualEditor; disabl
 }
 
 const TOOLS: Array<{ id: EditorTool; label: string; icon: LucideIcon }> = [
-  { id: 'select', label: 'Select elements for the chat', icon: MousePointer2 },
+  { id: 'select', label: 'Select an element for the chat', icon: MousePointer2 },
   { id: 'text', label: 'Edit text', icon: Type },
   { id: 'draw', label: 'Draw on the page', icon: Pencil },
 ]
 
-/** The tools bar over the preview (while open) with its hints, and the page-error card. */
+/**
+ * One card that changes with what you're doing (its width eases from one state to the next):
+ * the tools, then the active tool with its actions, e.g. "1 text change · Cancel · Save".
+ */
+function MorphCard({ state, children }: { state: string; children: ReactNode }) {
+  const inner = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState<number>()
+  useEffect(() => {
+    const el = inner.current
+    if (!el) return
+    // + the 1px border on each side.
+    const observer = new ResizeObserver(() => setWidth(el.offsetWidth + 2))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  return (
+    <div
+      role="toolbar"
+      aria-label="Editing tools"
+      style={{ width }}
+      className="pointer-events-auto max-w-full overflow-hidden rounded-[22px] border bg-raised/95 shadow-lg backdrop-blur transition-[width] duration-300 ease-out motion-reduce:transition-none"
+    >
+      <div ref={inner} className="w-max max-w-[calc(100vw-1.5rem)]">
+        <div key={state} className="flex fade-in items-center gap-1 p-1">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** The active tool's icon; pressing it goes back to the tools. */
+function ToolBadge({
+  icon: Icon,
+  onBack,
+  label = 'Back to the tools',
+}: {
+  icon: LucideIcon
+  onBack?: () => void
+  label?: string
+}) {
+  return onBack ? (
+    <button
+      type="button"
+      onClick={onBack}
+      aria-label={label}
+      title={label}
+      className={cn(round, 'bg-signal text-signal-ink hover:brightness-110')}
+    >
+      <Icon className="h-4 w-4" aria-hidden />
+    </button>
+  ) : (
+    <span aria-hidden className={cn(round, 'bg-signal text-signal-ink')}>
+      <Icon className="h-4 w-4" />
+    </span>
+  )
+}
+
+function Label({ children, spinner = false }: { children: ReactNode; spinner?: boolean }) {
+  return (
+    <span
+      role="status"
+      className="flex max-w-[16rem] min-w-0 items-center gap-1.5 px-1.5 text-xs text-dim"
+    >
+      {spinner && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />}
+      <span className="min-w-0">{children}</span>
+    </span>
+  )
+}
+
+/** The editing tools over the preview (while open), and the page-error card. */
 export function PreviewTools({
   editor,
   agentBusy,
-  pickCount,
+  outOfCredits,
+  picked,
 }: {
   editor: VisualEditor
   agentBusy: boolean
-  pickCount: number
+  /** No credits left: changed texts can't be saved. */
+  outOfCredits: boolean
+  /** The element picked for the chat (its tag), if any. */
+  picked: string | null
 }) {
-  const { tool, busy } = editor
-  const starting = tool !== null && !editor.bridge.connected && !editor.stalled
-  const hint =
-    busy === 'capturing'
-      ? 'Adding your drawing to the message…'
-      : busy === 'saving'
-        ? 'Saving your text…'
-        : tool === null
-          ? 'Pick a tool, then use it on the page.'
-          : starting
-            ? 'Starting the tools…'
-            : editor.stalled
-              ? null
-              : tool === 'text'
-                ? editor.editing
-                  ? 'Type, then press Enter to save · Esc to cancel'
-                  : 'Click any text on the page to edit it.'
-                : tool === 'select'
-                  ? pickCount
-                    ? null
-                    : 'Click elements to add them to your message.'
-                  : editor.strokes.length
-                    ? null
-                    : 'Draw on the page to show what you mean.'
+  const { tool, busy, texts, notice } = editor
+  const icon = TOOLS.find((t) => t.id === tool)?.icon ?? Type
+  const starting = tool !== null && !editor.bridge.connected
+
+  let state: string
+  let content: ReactNode
+  if (texts.length > 0 || busy === 'saving') {
+    // Changed texts wait here until saved or cancelled.
+    state = busy === 'saving' ? 'saving' : `texts:${outOfCredits}:${agentBusy}:${notice?.message}`
+    content =
+      busy === 'saving' ? (
+        <>
+          <ToolBadge icon={Type} />
+          <Label spinner>Saving…</Label>
+        </>
+      ) : (
+        <>
+          <ToolBadge icon={Type} />
+          <Label>
+            {notice
+              ? notice.message
+              : texts.length === 1
+                ? '1 text change'
+                : `${texts.length} text changes`}
+            {outOfCredits && !notice && (
+              <span className="block text-[11px] text-faint">No credits left</span>
+            )}
+          </Label>
+          {notice && (
+            <button
+              type="button"
+              onClick={editor.dismissNotice}
+              aria-label="Dismiss"
+              className={cn(round, quiet)}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={editor.cancelTexts}
+            className={cn(pill, 'border text-dim hover:bg-ink/[0.06] hover:text-ink')}
+          >
+            Cancel
+          </button>
+          {outOfCredits ? (
+            <Link to="/billing" className={cn(pill, 'btn-sculpted')}>
+              Get credits
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void editor.saveTexts()}
+              disabled={agentBusy}
+              title={agentBusy ? 'Save when the agent is done' : undefined}
+              className={cn(pill, 'btn-sculpted')}
+            >
+              Save
+            </button>
+          )}
+        </>
+      )
+  } else if (notice) {
+    state = `notice:${notice.message}`
+    content = (
+      <>
+        <ToolBadge icon={tool ? icon : Type} onBack={editor.back} />
+        <Label>{notice.message}</Label>
+        {notice.ask && (
+          <button type="button" onClick={editor.askInstead} className={cn(pill, 'btn-sculpted')}>
+            Ask AI
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={editor.dismissNotice}
+          aria-label="Dismiss"
+          className={cn(round, quiet)}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </>
+    )
+  } else if (tool === null) {
+    state = 'tools'
+    content = (
+      <>
+        {TOOLS.map(({ id, label, icon: Icon }) => {
+          const locked = id === 'text' && agentBusy
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={false}
+              aria-label={label}
+              title={locked ? 'Edit text when the agent is done' : label}
+              disabled={locked}
+              onClick={() => editor.choose(id)}
+              className={cn(round, quiet)}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+            </button>
+          )
+        })}
+        <span aria-hidden className="mx-0.5 h-5 w-px bg-ink/15" />
+        <button
+          type="button"
+          onClick={editor.close}
+          aria-label="Close the editing tools"
+          title="Close"
+          className={cn(round, quiet)}
+        >
+          <X className="h-4 w-4" aria-hidden />
+        </button>
+      </>
+    )
+  } else if (editor.stalled) {
+    state = 'stalled'
+    content = (
+      <>
+        <ToolBadge icon={icon} onBack={editor.back} />
+        <Label>The tools didn’t start in this page.</Label>
+        <button type="button" onClick={editor.reload} className={cn(pill, 'btn-sculpted')}>
+          Reload
+        </button>
+      </>
+    )
+  } else if (starting) {
+    state = 'starting'
+    content = (
+      <>
+        <ToolBadge icon={icon} onBack={editor.back} />
+        <Label spinner>Starting…</Label>
+      </>
+    )
+  } else if (tool === 'select') {
+    state = `select:${picked ?? ''}`
+    content = (
+      <>
+        <ToolBadge icon={MousePointer2} onBack={editor.back} />
+        <Label>{picked ? `<${picked}> is in your message` : 'Click an element'}</Label>
+        {picked && (
+          <button type="button" onClick={editor.showChat} className={cn(pill, 'btn-sculpted')}>
+            Write message
+          </button>
+        )}
+      </>
+    )
+  } else if (tool === 'text') {
+    state = `text:${editor.editing}`
+    content = (
+      <>
+        <ToolBadge icon={Type} onBack={editor.back} />
+        <Label>
+          {editor.editing ? 'Enter to keep it · Esc to undo' : 'Click any text to change it'}
+        </Label>
+      </>
+    )
+  } else if (busy === 'capturing') {
+    state = 'capturing'
+    content = (
+      <>
+        <ToolBadge icon={Pencil} />
+        <Label spinner>Adding it to your message…</Label>
+      </>
+    )
+  } else {
+    const drawn = editor.strokes.length > 0
+    state = 'draw'
+    content = (
+      <>
+        <ToolBadge icon={Pencil} onBack={editor.back} />
+        <Label>Annotation</Label>
+        <button
+          type="button"
+          onClick={editor.undoStroke}
+          disabled={!drawn}
+          aria-label="Undo"
+          title="Undo"
+          className={cn(round, quiet)}
+        >
+          <Undo2 className="h-4 w-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={editor.redoStroke}
+          disabled={!editor.canRedo}
+          aria-label="Redo"
+          title="Redo"
+          className={cn(round, quiet)}
+        >
+          <Redo2 className="h-4 w-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={editor.clearStrokes}
+          disabled={!drawn}
+          className={cn(pill, 'border text-dim hover:bg-ink/[0.06] hover:text-ink')}
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          onClick={() => void editor.attachDrawing()}
+          disabled={!drawn}
+          className={cn(pill, 'btn-sculpted')}
+        >
+          Add to chat
+        </button>
+      </>
+    )
+  }
 
   return (
     <>
@@ -122,126 +384,12 @@ export function PreviewTools({
         </div>
       )}
 
-      {editor.open && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2 px-3">
-          {editor.notice && (
-            <div className="pointer-events-auto flex w-full max-w-md rise items-start gap-2 rounded-2xl border bg-raised/95 p-2 pl-3.5 shadow-xl backdrop-blur">
-              <p role="status" className="min-w-0 flex-1 py-1.5 text-xs text-dim">
-                {editor.notice.message}
-              </p>
-              {editor.notice.retry && (
-                <button
-                  type="button"
-                  onClick={editor.askInstead}
-                  className="h-8 shrink-0 btn-sculpted rounded-full px-3 text-xs font-semibold"
-                >
-                  Ask AI
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={editor.dismissNotice}
-                aria-label="Dismiss"
-                className={cn(round, 'text-faint hover:bg-ink/[0.06] hover:text-ink')}
-              >
-                <X className="h-3.5 w-3.5" aria-hidden />
-              </button>
-            </div>
-          )}
-
-          <div
-            role="toolbar"
-            aria-label="Editing tools"
-            className="pointer-events-auto flex items-center gap-0.5 rounded-full border bg-raised/95 p-1 shadow-lg backdrop-blur"
-          >
-            {TOOLS.map(({ id, label, icon: Icon }) => {
-              const locked = id === 'text' && agentBusy
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  aria-pressed={tool === id}
-                  aria-label={label}
-                  title={locked ? 'Edit text when the agent is done' : label}
-                  disabled={locked}
-                  onClick={() => editor.choose(id)}
-                  className={cn(
-                    round,
-                    tool === id
-                      ? 'bg-signal text-signal-ink'
-                      : 'text-dim hover:bg-ink/[0.06] hover:text-ink disabled:hover:bg-transparent',
-                  )}
-                >
-                  <Icon className="h-4 w-4" aria-hidden />
-                </button>
-              )
-            })}
-            <span aria-hidden className="mx-0.5 h-5 w-px bg-ink/15" />
-            <button
-              type="button"
-              onClick={editor.close}
-              aria-label="Close the editing tools"
-              title="Close"
-              className={cn(round, 'text-dim hover:bg-ink/[0.06] hover:text-ink')}
-            >
-              <X className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
-
-          <div aria-live="polite" className="contents">
-            {hint && <Hint spinner={busy !== null || starting}>{hint}</Hint>}
-            {editor.stalled && (
-              <Hint>
-                The tools didn’t start in this page.
-                <HintButton onClick={editor.reload}>Reload preview</HintButton>
-              </Hint>
-            )}
-            {tool === 'select' && pickCount > 0 && busy === null && (
-              <Hint>
-                {pickCount === 1 ? '1 element' : `${pickCount} elements`} in your message
-                <HintButton onClick={editor.showChat}>Write message</HintButton>
-              </Hint>
-            )}
-            {tool === 'draw' && editor.strokes.length > 0 && busy === null && (
-              <Hint>
-                <HintButton onClick={editor.undoStroke}>
-                  <Undo2 className="h-3 w-3" aria-hidden /> Undo
-                </HintButton>
-                <HintButton onClick={editor.clearStrokes}>Clear</HintButton>
-                <button
-                  type="button"
-                  onClick={() => void editor.attachDrawing()}
-                  className="h-6 btn-sculpted rounded-full px-2.5 font-semibold"
-                >
-                  Add to chat
-                </button>
-              </Hint>
-            )}
-          </div>
+      {(editor.open || texts.length > 0) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
+          <MorphCard state={state}>{content}</MorphCard>
         </div>
       )}
     </>
-  )
-}
-
-function Hint({ children, spinner = false }: { children: ReactNode; spinner?: boolean }) {
-  return (
-    <p className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-paper/85 px-3 py-1 text-center text-xs text-dim backdrop-blur">
-      {spinner && <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />}
-      {children}
-    </p>
-  )
-}
-
-function HintButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex h-6 items-center gap-1 rounded-full px-2 font-medium text-ink hover:bg-ink/[0.08]"
-    >
-      {children}
-    </button>
   )
 }
 

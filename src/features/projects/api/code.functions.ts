@@ -12,6 +12,7 @@ import { commitAll, ensureRepo } from '~/lib/server/agent/checkpoints.server'
 import { appendAssistantNote, hasActiveRun } from '~/lib/server/agent/runner.server'
 import { relativePath, sh, shellQuote, writeText } from '~/lib/server/agent/sandbox-session.server'
 import { restartDevServer } from '~/lib/server/agent/tools/shell.server'
+import { getUserPlan } from '~/lib/server/billing/credits.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
 import {
@@ -107,6 +108,9 @@ export const saveProjectFile = createServerFn({ method: 'POST' })
   .handler(({ data, context }) =>
     safely('saveProjectFile', async () => {
       const absolute = editablePath(data.path)
+      if ((await getUserPlan(context.user.id)).plan === 'free') {
+        throw new AppError('Editing the code yourself is part of the paid plans.', 'limit')
+      }
       const session = await sessionFor(context.user.id, data.projectId, allowSave)
       if (await hasActiveRun(data.projectId)) {
         throw new AppError('The agent is working. Save when it’s done.', 'limit')

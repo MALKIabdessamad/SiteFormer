@@ -15,7 +15,7 @@ export type BridgeEvent =
   | { type: 'pick'; n: number; element: ElementRef }
   | { type: 'editing' }
   | { type: 'text-cancel' }
-  | { type: 'text-commit'; loc: string; before: string; after: string }
+  | { type: 'text-commit'; loc: string; tag: string; before: string; after: string }
   | ({ type: 'error' } & PageError)
   | { type: 'escape' }
   | { type: 'viewport'; scrollX: number; scrollY: number; path: string }
@@ -26,7 +26,7 @@ type PageMode = 'none' | 'select' | 'text'
 export type BridgeCommand =
   | { type: 'hello' }
   | { type: 'mode'; mode: PageMode }
-  | { type: 'picks'; keep: Array<number>; next: number }
+  | { type: 'picks'; keep: Array<number> }
   | { type: 'viewport' }
   | { type: 'scroll'; x: number; y: number }
 
@@ -59,7 +59,13 @@ export function parseBridgeEvent(data: unknown): BridgeEvent | null {
         : null
     case 'text-commit':
       return str(d['loc'], 300) && str(d['before']) && str(d['after'])
-        ? { type: 'text-commit', loc: d['loc'], before: d['before'], after: d['after'] }
+        ? {
+            type: 'text-commit',
+            loc: d['loc'],
+            tag: str(d['tag'], 40) && /^[a-z][a-z0-9-]*$/.test(d['tag']) ? d['tag'] : 'text',
+            before: d['before'],
+            after: d['after'],
+          }
         : null
     case 'viewport':
       return int(d['scrollX']) && int(d['scrollY']) && str(d['path'])

@@ -5,6 +5,7 @@ import { Spinner } from '~/components/ui/spinner'
 import { site } from '~/config/site'
 import { isSettledRun, useAgentRuns, useComposer, type SendOptions } from '~/features/agent'
 import { useRedirectOnSignOut } from '~/features/auth'
+import { useAccount } from '~/features/billing'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
@@ -26,6 +27,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [chatKey, setChatKey] = useState(0)
   const [previewKey, setPreviewKey] = useState(0)
   const composer = useComposer()
+  const { account } = useAccount()
 
   useRedirectOnSignOut()
 
@@ -166,6 +168,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           onBusyChange={setChatBusy}
           onProjectChanged={refresh}
           composer={composer}
+          account={account}
         />
       </div>
       <div
@@ -176,6 +179,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       >
         <ProjectPane
           project={project}
+          account={account}
           awake={awakeFor === projectId}
           agentBusy={chatBusy || Boolean(activeRun) || settling}
           building={activeRun ? activeRun.mode === 'build' : chatBusy && project.mode === 'build'}

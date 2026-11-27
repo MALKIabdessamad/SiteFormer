@@ -1,21 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronUp, MessageCircle, Sparkles } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import type { ProjectMode } from '~/features/projects'
 import { useDismiss } from '~/hooks/use-dismiss'
 import { cn } from '~/lib/utils/cn'
 
-const MODES: Array<{
-  id: ProjectMode
-  label: string
-  description: string
-  Icon: typeof Sparkles
-}> = [
-  { id: 'build', label: 'Build', description: 'Make changes directly', Icon: Sparkles },
+const MODES: Array<{ id: ProjectMode; label: string; description: string }> = [
+  { id: 'build', label: 'Build', description: 'Make changes directly' },
   {
     id: 'chat',
     label: 'Chat',
     description: 'Ask anything, explore ideas. Nothing in your project changes.',
-    Icon: MessageCircle,
   },
 ]
 
@@ -31,7 +25,10 @@ export const isModeShortcut = (e: {
 
 export const nextMode = (mode: ProjectMode): ProjectMode => (mode === 'build' ? 'chat' : 'build')
 
-/** The composer's mode chip and its menu (opens upwards, like the composer sits at the bottom). */
+/**
+ * The composer's mode chip, next to Send, and its menu (opens upwards from the right, as the
+ * composer sits at the bottom).
+ */
 export function ModeMenu({
   mode,
   disabled,
@@ -71,17 +68,13 @@ export function ModeMenu({
         aria-label={`Mode: ${current.label}. Change mode`}
         title={`${current.label} mode`}
         className={cn(
-          'inline-flex h-9 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition-colors hover:bg-ink/[0.06] disabled:cursor-not-allowed disabled:opacity-50',
-          open ? 'bg-ink/[0.06] text-ink' : 'text-dim hover:text-ink',
+          'inline-flex h-8 items-center gap-1 rounded-full border pr-2 pl-3 text-[13px] font-medium text-ink transition-colors hover:bg-ink/[0.06] disabled:cursor-not-allowed disabled:opacity-50',
+          open && 'bg-ink/[0.06]',
         )}
       >
-        <current.Icon
-          className={cn('h-4 w-4', mode === 'chat' ? 'text-signal' : undefined)}
-          aria-hidden
-        />
         {current.label}
-        <ChevronUp
-          className={cn('h-3.5 w-3.5 text-faint transition-transform', open && 'rotate-180')}
+        <ChevronDown
+          className={cn('h-3.5 w-3.5 text-dim transition-transform', open && 'rotate-180')}
           aria-hidden
         />
       </button>
@@ -97,7 +90,7 @@ export function ModeMenu({
             const step = e.key === 'ArrowDown' ? 1 : -1
             items.current[(at + step + MODES.length) % MODES.length]?.focus()
           }}
-          className="absolute bottom-full left-0 z-20 mb-2 w-64 rise rounded-2xl border bg-raised p-1.5 shadow-xl"
+          className="absolute right-0 bottom-full z-20 mb-2 w-64 rise rounded-2xl border bg-raised p-1.5 shadow-xl"
         >
           {MODES.map((m, i) => (
             <button

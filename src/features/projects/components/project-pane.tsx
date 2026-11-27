@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type { Composer, SendOptions } from '~/features/agent'
+import type { Account } from '~/features/billing'
 import { Code2, Eye } from 'lucide-react'
 import { cn } from '~/lib/utils/cn'
 import type { Project } from '../types'
@@ -24,6 +25,7 @@ const TABS: Array<{ id: Tab; label: string; Icon: typeof Eye }> = [
  */
 export function ProjectPane({
   project,
+  account,
   awake,
   agentBusy,
   building,
@@ -38,6 +40,8 @@ export function ProjectPane({
   chatToggle,
 }: {
   project: Project
+  /** The user's plan and credits (null while loading). */
+  account: Account | null
   /** The sandbox answered since the page opened (it may have been asleep). */
   awake: boolean
   agentBusy: boolean
@@ -144,7 +148,8 @@ export function ProjectPane({
                 <PreviewTools
                   editor={editor}
                   agentBusy={agentBusy}
-                  pickCount={composer.picks.length}
+                  outOfCredits={account !== null && account.credits < 1}
+                  picked={composer.picks[0]?.element.tag ?? null}
                 />
               </>
             }
@@ -158,6 +163,7 @@ export function ProjectPane({
               projectId={project.id}
               ready={project.status === 'ready'}
               agentBusy={agentBusy}
+              canEdit={account !== null && account.plan !== 'free'}
               refreshSignal={reloadSignal}
               onSaved={onSaved}
             />

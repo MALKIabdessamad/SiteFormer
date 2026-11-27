@@ -1,7 +1,12 @@
 import { expect, test } from 'bun:test'
 import { referenceLine, splitReferences } from '../../src/features/agent/lib/references'
 import { fixRequest, parseBridgeEvent } from '../../src/features/projects/lib/preview-bridge'
-import { EditError, parseLoc, replaceText } from '../../src/lib/server/visual-edit/jsx-edit'
+import {
+  applyTextEdits,
+  EditError,
+  parseLoc,
+  replaceText,
+} from '../../src/lib/server/visual-edit/jsx-edit'
 
 const FILE = `import { cn } from "@/lib/utils";
 export function Hero({ title }: { title: string }) {
@@ -65,17 +70,42 @@ test('a fix request carries the error once, with the page', () => {
   ).toContain('a build error on page /.')
 })
 
-test('picked elements travel as numbered lines and come back as chips', () => {
+test('the selected element travels as a line and comes back as a chip', () => {
   const element = { loc: 'src/routes/index.tsx:5:7', tag: 'h1', text: 'Say "hi"\n now', path: '/' }
-  const line = referenceLine(element, { n: 2 })
-  expect(line).toBe('⌖2 <h1> "Say ”hi” now" at src/routes/index.tsx:5:7 on /')
-  const { text, refs } = splitReferences(`Make these bigger\n${line}`)
-  expect(text).toBe('Make these bigger')
+  const line = referenceLine(element)
+  expect(line).toBe('⌖ <h1> "Say ”hi” now" at src/routes/index.tsx:5:7 on /')
+  const { text, refs } = splitReferences(`Make it bigger\n${line}`)
+  expect(text).toBe('Make it bigger')
   expect(refs).toEqual([
-    { n: 2, tag: 'h1', text: 'Say ”hi” now', loc: element.loc, path: '/', note: '' },
+    { n: null, tag: 'h1', text: 'Say ”hi” now', loc: element.loc, path: '/', note: '' },
   ])
-  // Older messages carried a note per element; they still show.
-  expect(splitReferences(`${line} — bigger`).refs[0]?.note).toBe('bigger')
+  // Older messages numbered their lines and could carry a note; they still show.
+  expect(splitReferences('⌖2 <p> "x" at src/a.tsx:1:1 on / — bigger').refs[0]).toMatchObject({
+    n: 2,
+    note: 'bigger',
+  })
+})
+
+test('several text changes in a file: all applied, from the end backwards', () => {
+  const source = `export const A = () => (
+  <div>
+    <h1>One</h1><p>Two</p>
+    <span>{"Year " + 2026}</span>
+    <p>Three</p>
+  </div>
+)
+`
+  const loc = (line: number, column: number) => ({ file: 'src/a.tsx', line, column })
+  const { code, failed } = applyTextEdits(source, [
+    { loc: loc(3, 5), before: 'One', after: 'First' },
+    { loc: loc(3, 17), before: 'Two', after: 'Second' }, // same line, after the first
+    { loc: loc(4, 5), before: 'Year 2026', after: 'Year 2030' }, // computed: can't
+    { loc: loc(5, 5), before: 'Three', after: 'Third' },
+  ])
+  expect(code).toContain('<h1>First</h1><p>Second</p>')
+  expect(code).toContain('<p>Third</p>')
+  expect(code).toContain('{"Year " + 2026}')
+  expect(failed.map((f) => f.edit.after)).toEqual(['Year 2030'])
 })
 
 test('bridge messages are checked before use', () => {

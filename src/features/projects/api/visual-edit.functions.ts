@@ -1,8 +1,9 @@
 /**
  * The preview's editing tools on the server:
- * - Edit text: the user typed over some text in the preview; it's saved straight into the code
- *   (committed as a checkpoint and noted in the chat, like a Code tab save; no AI, no credits).
- *   When the text comes from code, the result says so and the editor offers the AI instead.
+ * - Edit text: the user changed texts in the preview, then pressed Save: they're written straight
+ *   into the code (one checkpoint, noted in the chat; no AI, but it needs credits left). A text
+ *   that comes from code can't be saved this way: the result says so and the editor offers the
+ *   AI instead.
  * - Draw: the user drew on the preview; the page is rendered in the sandbox exactly as they saw
  *   it, with the drawing on top, and stored as a sketch to attach to their next message.
  */
@@ -13,6 +14,7 @@ import { appendAssistantNote, hasActiveRun } from '~/lib/server/agent/runner.ser
 import { writeText } from '~/lib/server/agent/sandbox-session.server'
 import { renderSketch } from '~/lib/server/agent/tools/browser.server'
 import { saveUpload } from '~/lib/server/agent/uploads.server'
+import { requireCredits } from '~/lib/server/billing/credits.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
 import { editablePath, readFile, sessionFor } from '~/lib/server/project-files.server'
@@ -20,28 +22,36 @@ import { rateLimiter } from '~/lib/server/rate-limit'
 import { requireUser } from '~/lib/server/require-user'
 import { serialQueue } from '~/lib/server/serial'
 import { validate } from '~/lib/server/validate'
-import { EditError, parseLoc, replaceText } from '~/lib/server/visual-edit/jsx-edit'
+import { applyTextEdits, parseLoc, type TextEdit } from '~/lib/server/visual-edit/jsx-edit'
 
-export type TextEditResult =
-  /** `note`: what the chat now ends with (shown at once, without reloading the chat). */
-  | { status: 'saved'; note: string }
-  | { status: 'unchanged' }
-  | { status: 'unsupported'; message: string }
+export type TextSaveResult = {
+  /** What the chat now ends with, when something was saved. */
+  note: string | null
+  /** Changes that couldn't be saved directly (e.g. the text comes from code). */
+  failed: Array<{ loc: string; after: string; message: string }>
+}
 
 const allowEdit = rateLimiter(60)
 const allowSketch = rateLimiter(20)
 
 const projectId = z.uuid('Project not found.')
 
-const TextInput = validate(
+const TextEditsInput = validate(
   z.object({
     projectId,
-    loc: z
-      .string()
-      .max(300)
-      .refine((value) => parseLoc(value) !== null, 'Invalid element.'),
-    before: z.string().min(1).max(2000),
-    after: z.string().trim().min(1, 'The text can’t be empty.').max(2000),
+    edits: z
+      .array(
+        z.object({
+          loc: z
+            .string()
+            .max(300)
+            .refine((value) => parseLoc(value) !== null, 'Invalid element.'),
+          before: z.string().min(1).max(2000),
+          after: z.string().trim().min(1, 'A text can’t be empty.').max(2000),
+        }),
+      )
+      .min(1)
+      .max(50),
   }),
 )
 
@@ -70,42 +80,64 @@ const SketchInput = validate(
 // One edit at a time per project, so quick successive edits never overwrite each other.
 const oneAtATime = serialQueue()
 
-/** Saves text typed over an element in the preview. */
-export const editElementText = createServerFn({ method: 'POST' })
+/** Saves the texts changed in the preview (all of them in one checkpoint). */
+export const saveTextEdits = createServerFn({ method: 'POST' })
   .middleware([requireUser])
-  .validator(TextInput)
+  .validator(TextEditsInput)
   .handler(({ data, context }) =>
-    safely('editElementText', () =>
-      oneAtATime(data.projectId, async (): Promise<TextEditResult> => {
-        const at = parseLoc(data.loc)!
+    safely('saveTextEdits', () =>
+      oneAtATime(data.projectId, async (): Promise<TextSaveResult> => {
+        await requireCredits(context.user.id)
         const session = await sessionFor(context.user.id, data.projectId, allowEdit)
         if (await hasActiveRun(data.projectId)) {
-          throw new AppError('The agent is working. Try again when it’s done.', 'limit')
+          throw new AppError('The agent is working. Save when it’s done.', 'limit')
         }
-        const absolute = editablePath(at.file)
-        const file = await readFile(session, absolute)
-        if (file.kind === 'missing') throw new AppError('This file no longer exists.', 'not_found')
-        if (file.kind !== 'text') throw new AppError('This file can’t be edited here.')
-        let next: string
-        try {
-          next = replaceText(file.content, at, data.before, data.after)
-        } catch (error) {
-          if (error instanceof EditError) return { status: 'unsupported', message: error.message }
-          throw error
+        const byFile = new Map<string, Array<TextEdit & { raw: string }>>()
+        for (const edit of data.edits) {
+          const loc = parseLoc(edit.loc)!
+          const list = byFile.get(loc.file) ?? []
+          list.push({ loc, raw: edit.loc, before: edit.before, after: edit.after })
+          byFile.set(loc.file, list)
         }
-        if (next === file.content) return { status: 'unchanged' }
-        await writeText(session, absolute, next)
+        const failed: TextSaveResult['failed'] = []
+        const changed: Array<string> = []
+        for (const [path, edits] of byFile) {
+          const absolute = editablePath(path)
+          const file = await readFile(session, absolute)
+          if (file.kind !== 'text') {
+            const message =
+              file.kind === 'missing'
+                ? 'This file no longer exists.'
+                : 'This file can’t be edited here.'
+            for (const edit of edits) failed.push({ loc: edit.raw, after: edit.after, message })
+            continue
+          }
+          const result = applyTextEdits(file.content, edits)
+          for (const { edit, message } of result.failed) {
+            failed.push({ loc: edit.raw, after: edit.after, message })
+          }
+          if (result.code !== file.content) {
+            await writeText(session, absolute, result.code)
+            changed.push(path)
+          }
+        }
+        if (changed.length === 0) return { note: null, failed }
+
         await ensureRepo(session)
-        await commitAll(session, `Text edit: ${at.file}`)
-        const note = `✎ You edited text in ${at.file} from the preview. Saved as a checkpoint.`
+        await commitAll(session, `Text edits: ${changed.join(', ')}`)
+        const saved = data.edits.length - failed.length
+        const what = saved === 1 ? 'text' : `${saved} texts`
+        const note = `✎ You edited ${what} in ${changed.join(', ')} from the preview. Saved as a checkpoint.`
         await appendAssistantNote(data.projectId, note, { unlessRepeated: true })
-        log.info('Text edited in the preview', {
+        log.info('Texts edited in the preview', {
           event: 'preview.text_edited',
           projectId: data.projectId,
           userId: context.user.id,
-          path: at.file,
+          files: changed,
+          saved,
+          failed: failed.length,
         })
-        return { status: 'saved', note }
+        return { note, failed }
       }),
     ),
   )

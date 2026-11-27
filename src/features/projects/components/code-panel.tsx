@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -28,19 +29,23 @@ const iconButton =
 
 /**
  * The project's code: a file tree and an editor. Saving commits the change as a checkpoint and
- * notes it in the chat. Editing is locked while the agent works; files the agent changed reload
- * when its run ends (unless you have unsaved edits there).
+ * notes it in the chat. Editing is locked while the agent works, and on the Free plan (the code
+ * can be read, not changed by hand); files the agent changed reload when its run ends (unless
+ * you have unsaved edits there).
  */
 export function CodePanel({
   projectId,
   ready,
   agentBusy,
+  canEdit,
   refreshSignal,
   onSaved,
 }: {
   projectId: string
   ready: boolean
   agentBusy: boolean
+  /** Editing the code by hand is part of the paid plans. */
+  canEdit: boolean
   /** Changes when files may have changed (a run finished, a restore). */
   refreshSignal: number
   /** Saved: `note` is what the chat now ends with. */
@@ -144,7 +149,7 @@ export function CodePanel({
   }
 
   const save = async () => {
-    if (!selected || loaded?.kind !== 'text' || !dirty || saving || agentBusy) return
+    if (!canEdit || !selected || loaded?.kind !== 'text' || !dirty || saving || agentBusy) return
     setSaving(true)
     try {
       const result = await saveProjectFile({
@@ -192,7 +197,7 @@ export function CodePanel({
       </Message>
     )
 
-  const readOnly = agentBusy || saving || loaded?.kind !== 'text'
+  const readOnly = !canEdit || agentBusy || saving || loaded?.kind !== 'text'
 
   return (
     <section
@@ -258,7 +263,16 @@ export function CodePanel({
                   </span>
                 )}
               </span>
-              {agentBusy ? (
+              {!canEdit ? (
+                <span className="flex shrink-0 items-center gap-2 text-[11px] text-faint">
+                  <span className="flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium">
+                    <Lock className="h-3 w-3" aria-hidden /> View only
+                  </span>
+                  <Link to="/billing" className="font-semibold text-signal hover:underline">
+                    Upgrade to edit
+                  </Link>
+                </span>
+              ) : agentBusy ? (
                 <span className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-faint">
                   <Lock className="h-3 w-3" aria-hidden /> Agent working
                 </span>
@@ -267,7 +281,7 @@ export function CodePanel({
                   Read only
                 </span>
               ) : null}
-              {dirty && (
+              {canEdit && dirty && (
                 <button
                   type="button"
                   onClick={() => setDraft(null)}
@@ -279,20 +293,22 @@ export function CodePanel({
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={!dirty || saving || agentBusy}
-                title={agentBusy ? 'Wait for the agent to finish' : 'Save (Ctrl/⌘ S)'}
-                className="inline-flex h-8 shrink-0 btn-sculpted items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Save className="h-3.5 w-3.5" aria-hidden />
-                )}
-                Save
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => void save()}
+                  disabled={!dirty || saving || agentBusy}
+                  title={agentBusy ? 'Wait for the agent to finish' : 'Save (Ctrl/⌘ S)'}
+                  className="inline-flex h-8 shrink-0 btn-sculpted items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  Save
+                </button>
+              )}
             </div>
             <div className="relative min-h-0 flex-1 bg-[#282c34]">
               {fileError ? (

@@ -85,6 +85,31 @@ function jsxText(text: string): string {
   return /[{}<>&]/.test(text) ? `{${JSON.stringify(text)}}` : text
 }
 
+export type TextEdit = { loc: SourceLoc; before: string; after: string }
+
+/**
+ * Several text changes in one file. Applied from the end of the file backwards, so each
+ * element is still where the preview reported it. Changes that can't be made are returned
+ * with the reason; the others are applied.
+ */
+export function applyTextEdits<T extends TextEdit>(
+  source: string,
+  edits: Array<T>,
+): { code: string; failed: Array<{ edit: T; message: string }> } {
+  const ordered = [...edits].sort((a, b) => b.loc.line - a.loc.line || b.loc.column - a.loc.column)
+  const failed: Array<{ edit: T; message: string }> = []
+  let code = source
+  for (const edit of ordered) {
+    try {
+      code = replaceText(code, edit.loc, edit.before, edit.after)
+    } catch (error) {
+      if (!(error instanceof EditError)) throw error
+      failed.push({ edit, message: error.message })
+    }
+  }
+  return { code, failed }
+}
+
 /** Changes an element's text (a single plain text child) from `before` to `after`. */
 export function replaceText(source: string, loc: SourceLoc, before: string, after: string): string {
   const element = findElement(source, loc)

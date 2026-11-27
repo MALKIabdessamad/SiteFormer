@@ -59,22 +59,23 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   tool calls are closed out so the model can redo them). Opening a project also self-heals.
 - **No time limit.** Only safety caps: `AGENT_MAX_STEPS` model turns per run, per-command
   timeouts inside the sandbox. The user can press **Stop** at any time.
-- **Build / Chat mode** (composer chip, ⌥P / Alt+P; saved in `projects.mode`, recorded per run
+- **Build / Chat mode** (the chip next to Send, ⌥P / Alt+P; saved in `projects.mode`, recorded per run
   in `agent_runs.mode`). Chat runs get read-only tools only (read/search files, preview,
   screenshots, research), make no checkpoints and don't copy attachments into the project;
   the server enforces it, not just the UI.
-- **Editing tools** (closed by default; the pencil-ruler button in the preview header opens a
-  small bar over the preview with three tools):
-  - _Select_: click elements on the page; each gets a numbered badge and a chip in the message
-    box, and travels with the next message as a line like
-    `⌖1 <h1> "…" at src/routes/index.tsx:23:9 on /` (the exact JSX location; shown as a chip in
-    the chat).
-  - _Edit text_: click text on the page and type; Enter saves it straight into the code (Babel
-    finds the element by its source line: exact, no AI, no credits), committed as a checkpoint
-    and noted in the chat. When the text comes from code, the editor offers _Ask AI_ instead.
-  - _Draw_: draw on the page, then _Add to chat_. The sandbox's browser renders the same page at
-    the same size and scroll with the lines on it, and that image is attached to the message
-    (`agent_uploads.purpose = 'sketch'`: shown to the model, never copied into the site).
+- **Editing tools** (closed by default; the pencil-ruler button next to Publish opens one card
+  over the preview, which changes shape smoothly with what you're doing):
+  - _Select_: click an element (one at a time); it gets an outline in the page and a small blue
+    chip in the message box (its kind and tag), and travels with the next message as a line like
+    `⌖ <h1> "…" at src/routes/index.tsx:23:9 on /` (the exact JSX location).
+  - _Edit text_: click texts on the page and type; the card shows _N text changes · Cancel ·
+    Save_. Save writes them all into the code in one checkpoint (Babel finds each element by its
+    source line: exact, no AI) and notes it in the chat; it needs credits left (no credits: _Get
+    credits_ instead). Cancel reloads the page. Texts that come from code get _Ask AI_ instead.
+  - _Draw_: draw on the page (_Annotation · Undo · Redo · Clear_), then _Add to chat_. The
+    sandbox's browser renders the same page at the same size and scroll with the lines on it, and
+    that image is attached to the message (`agent_uploads.purpose = 'sketch'`: shown to the
+    model, never copied into the site).
   - Separately, page errors show a calm card with _Fix it_ (never Vite's red overlay), and the
     path bar follows link clicks in the preview.
 - **No half-written pages.** While a Build run works, the sandbox's dev server holds back live
@@ -83,7 +84,9 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   reloads with the result. Pages opened in their own tab reload too.
 - **Queue and suggestions.** Messages typed while the agent works wait in a queue and send when
   it's done. After each reply, a small model suggests up to three next steps
-  (`agent_runs.suggestions`).
+  (`agent_runs.suggestions`), shown as a row of chips on top of the composer.
+- **Code tab.** Everyone can read the code; editing it by hand is part of the paid plans (the
+  Free plan shows it view only, and the server refuses a save).
 - **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
   row of icons: _Revert to this version_ / _Undo latest edit_, plus the credits it used. A restore
   is a new commit (undoable) and adds a note to the transcript so the model knows.
