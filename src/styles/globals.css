@@ -107,3 +107,37 @@
     animation: none;
   }
 }
+
+/* A slim bar sliding across while something loads. */
+@keyframes loading-bar {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@utility loading-bar {
+  animation: loading-bar 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Shows only if it is still there after a moment (quick checks never flash on screen). */
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@utility appear-late {
+  animation: appear 0.3s ease-out 0.8s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-bar {
+    animation: none;
+  }
+  .appear-late {
+    animation-duration: 0s;
+  }
+}

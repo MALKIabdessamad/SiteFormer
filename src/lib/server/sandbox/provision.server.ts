@@ -155,10 +155,15 @@ async function resume(target: ProvisionTarget): Promise<void> {
     // Older projects get the editor bridge here (and every project its latest version).
     editorInstallScript(),
     '(pgrep -f "[v]ite dev" >/dev/null 2>&1 || (nohup bun run dev >/tmp/dev.log 2>&1 &))',
-    'echo ok',
+    // Wait here for the preview to answer: one round trip when the sandbox is already up.
+    'for i in $(seq 1 120); do',
+    `  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://localhost:${previewPort()}/ || true)`,
+    '  case "$code" in 2??|3??|4??) echo preview-up; exit 0;; esac',
+    '  sleep 0.5',
+    'done',
   ].join('\n')
-  await exec(target.sandboxId, start, 60_000)
-  await waitForPreview(target.sandboxId, 90_000)
+  const started = await exec(target.sandboxId, start, 120_000)
+  if (!started.stdout.includes('preview-up')) await waitForPreview(target.sandboxId, 30_000)
 }
 
 // ---------------------------------------------------------------------------------------------

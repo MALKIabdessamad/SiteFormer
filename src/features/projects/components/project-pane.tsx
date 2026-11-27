@@ -24,7 +24,9 @@ const TABS: Array<{ id: Tab; label: string; Icon: typeof Eye }> = [
  */
 export function ProjectPane({
   project,
+  awake,
   agentBusy,
+  building,
   reloadSignal,
   retrying,
   onRetry,
@@ -36,7 +38,11 @@ export function ProjectPane({
   chatToggle,
 }: {
   project: Project
+  /** The sandbox answered since the page opened (it may have been asleep). */
+  awake: boolean
   agentBusy: boolean
+  /** A build run is working: the preview shows its result when it's done. */
+  building: boolean
   reloadSignal: number
   retrying: boolean
   onRetry: () => void
@@ -54,7 +60,7 @@ export function ProjectPane({
 }) {
   const [tab, setTab] = useState<Tab>('preview')
   const [codeOpened, setCodeOpened] = useState(false)
-  const preview = usePreview(project)
+  const preview = usePreview(project, awake)
   const frameKey = `${reloadSignal}:${preview.reloads}:${preview.path}`
   const editor = useVisualEditor({
     projectId: project.id,
@@ -133,11 +139,14 @@ export function ProjectPane({
               )
             }
             overlay={
-              <PreviewTools
-                editor={editor}
-                agentBusy={agentBusy}
-                pickCount={composer.picks.length}
-              />
+              <>
+                {building && <BuildingNote />}
+                <PreviewTools
+                  editor={editor}
+                  agentBusy={agentBusy}
+                  pickCount={composer.picks.length}
+                />
+              </>
             }
             retrying={retrying}
             onRetry={onRetry}
@@ -155,6 +164,21 @@ export function ProjectPane({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** While the AI builds, the preview keeps the last version (no half-written pages or errors). */
+function BuildingNote() {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
+      <p
+        role="status"
+        className="flex items-center gap-2 rounded-full border bg-raised/90 px-3 py-1.5 text-xs text-dim shadow-lg backdrop-blur"
+      >
+        <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" />
+        The preview updates when the AI is done
+      </p>
     </div>
   )
 }

@@ -31,6 +31,10 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
 
   // Reload the preview whenever a run settles (its changes are committed and in place).
   const finishedRuns = runs.filter(isSettledRun).length
+  // A run that ended but whose result isn't in place yet: the preview is about to reload with it,
+  // so direct edits wait for that (an edit started meanwhile would be cut off by the reload).
+  const lastRun = runs.at(-1)
+  const settling = Boolean(lastRun) && !isSettledRun(lastRun)
   const seenFinished = useRef<number | null>(null)
   useEffect(() => {
     if (seenFinished.current !== null && finishedRuns > seenFinished.current)
@@ -59,14 +63,24 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     if (name) document.title = `${name} · ${site.name}`
   }, [name])
 
-  // Opening the page resumes an interrupted setup, or wakes a sleeping sandbox.
+  // Opening the page resumes an interrupted setup, or wakes a sandbox that went to sleep: the
+  // preview shows once it's up (if waking fails, the project shows that it failed).
+  const [awakeFor, setAwakeFor] = useState<string | null>(null)
   useEffect(() => {
-    openProject({ data: { projectId } }).catch((err: unknown) =>
-      reportClientError('project', 'Opening the project failed', {
-        projectId,
-        detail: toErrorMessage(err),
-      }),
-    )
+    let current = true
+    openProject({ data: { projectId } })
+      .catch((err: unknown) =>
+        reportClientError('project', 'Opening the project failed', {
+          projectId,
+          detail: toErrorMessage(err),
+        }),
+      )
+      .finally(() => {
+        if (current) setAwakeFor(projectId)
+      })
+    return () => {
+      current = false
+    }
   }, [projectId])
 
   const retry = async () => {
@@ -162,7 +176,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       >
         <ProjectPane
           project={project}
-          agentBusy={chatBusy || Boolean(activeRun)}
+          awake={awakeFor === projectId}
+          agentBusy={chatBusy || Boolean(activeRun) || settling}
+          building={activeRun ? activeRun.mode === 'build' : chatBusy && project.mode === 'build'}
           reloadSignal={previewKey}
           retrying={busy === 'retry'}
           onRetry={() => void retry()}

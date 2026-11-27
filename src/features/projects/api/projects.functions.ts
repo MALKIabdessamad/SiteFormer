@@ -160,9 +160,12 @@ export const openProject = createServerFn({ method: 'POST' })
     safely('openProject', async () => {
       const project = await ownedProject(context.user.id, data.projectId)
       background(recoverRuns(project.id))
-      if (isBusy(project.id)) return { ok: true }
-      if (project.status === 'provisioning') background(ensureProvisioned(provisionTarget(project)))
-      if (project.status === 'ready') background(ensureRunning(provisionTarget(project)))
+      if (project.status === 'provisioning' && !isBusy(project.id)) {
+        background(ensureProvisioned(provisionTarget(project)))
+      }
+      // A sandbox that went to sleep wakes up here (and its dev server restarts if it stopped):
+      // the page shows the preview once this returns, never a sandbox that isn't up yet.
+      if (project.status === 'ready') await ensureRunning(provisionTarget(project))
       return { ok: true }
     }),
   )

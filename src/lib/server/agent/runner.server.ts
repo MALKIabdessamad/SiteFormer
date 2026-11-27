@@ -60,7 +60,13 @@ import {
 } from './uploads.server'
 import { getRunRow, persistence, runStore, type AgentRunRow } from './persistence.server'
 import { CHAT_MODE_PROMPT, runContext, SYSTEM_PROMPT } from './prompt.server'
-import { capText, projectSession, type SandboxSession } from './sandbox-session.server'
+import {
+  capText,
+  PREVIEW_HOLD_FILE,
+  projectSession,
+  sh,
+  type SandboxSession,
+} from './sandbox-session.server'
 import { agentTools } from './tools/index.server'
 import { restartDevServer } from './tools/shell.server'
 
@@ -486,6 +492,8 @@ async function driveInner(runId: string, controller: AbortController, resumed: b
       row.id,
       controller.signal,
     )
+    // The preview shows the result when the run is done, never half-written files.
+    session.holdPreview = row.mode === 'build'
     runLog.info(resumed ? 'Agent run resumed after restart' : 'Agent run started', {
       event: resumed ? 'agent.resumed' : 'agent.started',
       sandboxId: project.sandbox_id,
@@ -611,12 +619,22 @@ async function offerNextSteps(run: AgentRunRow) {
 /** Checkpoint after the run, and make sure the run ends in a terminal status. */
 async function finalize(runId: string, session: SandboxSession | null, row: AgentRunRow) {
   const patch: Partial<AgentRunRow> = {}
-  if (session && row.checkpoint_before) {
+  const afterSession = session && {
+    ...session,
+    holdPreview: false,
+    signal: new AbortController().signal,
+  }
+  if (afterSession && row.checkpoint_before) {
     // Commit even after a stop/failure so the user can always restore around this run.
-    const afterSession = { ...session, signal: new AbortController().signal }
     const after = await commitAll(afterSession, row.prompt)
     patch.checkpoint_after = after
     patch.files_changed = await filesChanged(afterSession, row.checkpoint_before, after)
+  }
+  // The preview may live-update again (the page reloads to show the result).
+  if (afterSession && session?.holdPreview) {
+    await sh(afterSession, `rm -f ${PREVIEW_HOLD_FILE}`, { timeoutSeconds: 15 }).catch(
+      () => undefined,
+    )
   }
   const current = await getRunRow(runId)
   if (current && (current.status === 'queued' || current.status === 'running')) {

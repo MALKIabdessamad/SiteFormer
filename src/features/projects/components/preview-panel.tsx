@@ -1,5 +1,5 @@
 import { useState, type ReactNode, type RefObject } from 'react'
-import { AlertTriangle, ExternalLink, Loader2, Monitor, Smartphone, Tablet } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Monitor, Smartphone, Tablet } from 'lucide-react'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils/cn'
 import { toPath } from '../lib/site-pages'
@@ -23,9 +23,12 @@ const DEVICES: Array<{
 const roundButton =
   'h-9 w-9 shrink-0 place-items-center rounded-full text-dim transition-colors hover:bg-ink/[0.06] hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent md:pointer-fine:h-8 md:pointer-fine:w-8'
 
-/** Preview state shared by the header controls and the frame. */
-export function usePreview(project: Project) {
-  const url = project.status === 'ready' ? project.preview_url : null
+/**
+ * Preview state shared by the header controls and the frame. `awake`: the sandbox answered since
+ * the page opened (until then there is no page to show: it may be waking up).
+ */
+export function usePreview(project: Project, awake: boolean) {
+  const url = project.status === 'ready' && awake ? project.preview_url : null
   const [device, setDevice] = useState<PreviewDevice>('desktop')
   const [path, setPath] = useState('/')
   // Where the page actually is (the editor bridge reports link clicks inside the preview).
@@ -139,6 +142,17 @@ export function PreviewFrame({
   const width = DEVICES.find((d) => d.id === preview.device)?.width ?? null
 
   if (!preview.url) {
+    if (project.status === 'ready') {
+      return (
+        <CenteredState late>
+          <p className="font-display text-xl font-bold">Waking up your sandbox</p>
+          <p className="mt-1 max-w-sm text-sm text-dim">
+            It sleeps while you’re away. This takes a few seconds.
+          </p>
+          <LoadingBar label="Waking up your sandbox" className="mt-6 w-40" />
+        </CenteredState>
+      )
+    }
     return project.status === 'failed' ? (
       <CenteredState>
         <AlertTriangle className="h-7 w-7 text-danger" aria-hidden />
@@ -152,11 +166,11 @@ export function PreviewFrame({
       </CenteredState>
     ) : (
       <CenteredState>
-        <Loader2 className="h-7 w-7 animate-spin text-signal" aria-hidden />
-        <p className="mt-4 font-display text-xl font-bold">Setting up your sandbox</p>
+        <p className="font-display text-xl font-bold">Setting up your sandbox</p>
         <p className="mt-1 max-w-sm text-sm text-dim">
           Installing the starter app and starting the preview. This takes a few seconds.
         </p>
+        <LoadingBar label="Setting up your sandbox" className="mt-6 w-40" />
       </CenteredState>
     )
   }
@@ -192,12 +206,7 @@ export function PreviewFrame({
           />
           {frameOverlay}
           {loaded !== frameKey && (
-            <div
-              className="pointer-events-none absolute inset-0 grid place-items-center bg-paper/50"
-              aria-hidden
-            >
-              <Loader2 className="h-6 w-6 animate-spin text-dim" />
-            </div>
+            <LoadingBar label="Loading the preview" className="absolute inset-x-0 top-0 z-10" />
           )}
         </div>
       </section>
@@ -206,10 +215,27 @@ export function PreviewFrame({
   )
 }
 
-function CenteredState({ children }: { children: React.ReactNode }) {
+/** `late`: shows only if it's still needed after a moment (a quick check doesn't flash). */
+function CenteredState({ children, late = false }: { children: ReactNode; late?: boolean }) {
   return (
     <div role="status" className="grid h-full place-items-center p-6 text-center">
-      <div className="flex flex-col items-center">{children}</div>
+      <div className={cn('flex flex-col items-center', late && 'appear-late')}>{children}</div>
+    </div>
+  )
+}
+
+/** A slim bar sliding across: something is loading (never a spinner over the page). */
+function LoadingBar({ label, className }: { label: string; className?: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      className={cn(
+        'pointer-events-none h-0.5 overflow-hidden rounded-full bg-signal/15',
+        className,
+      )}
+    >
+      <div className="h-full w-2/5 loading-bar rounded-full bg-signal" />
     </div>
   )
 }

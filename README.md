@@ -37,7 +37,8 @@ Signed-in users who open `/` go to `/dashboard`; signed-out users who open `/das
 - Setup is **idempotent**: an interrupted setup (deploy, crash) resumes when the project page is
   opened; a failed one shows the reason and a _Try again_ button.
 - Opening a ready project **wakes** its sandbox (it auto-sleeps after 30 min idle) and makes sure
-  the dev server runs. Deleting a project deletes its sandbox first.
+  the dev server runs; the preview shows only once it answers (meanwhile: "Waking up your
+  sandbox", which a quick check never flashes). Deleting a project deletes its sandbox first.
 - The AI agent runs **on our server, never inside the sandbox** (see `docs/plan-sandbox-agent.md`).
 
 ## The AI coding agent
@@ -74,8 +75,12 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   - _Draw_: draw on the page, then _Add to chat_. The sandbox's browser renders the same page at
     the same size and scroll with the lines on it, and that image is attached to the message
     (`agent_uploads.purpose = 'sketch'`: shown to the model, never copied into the site).
-  - Separately, page errors show a calm card with _Fix it_, and the path bar follows link clicks
-    in the preview.
+  - Separately, page errors show a calm card with _Fix it_ (never Vite's red overlay), and the
+    path bar follows link clicks in the preview.
+- **No half-written pages.** While a Build run works, the sandbox's dev server holds back live
+  updates (the runner keeps `/tmp/siteformer-hold` current; it lapses on its own 10 min after the
+  last command): the preview keeps the last version, says it updates when the AI is done, and
+  reloads with the result. Pages opened in their own tab reload too.
 - **Queue and suggestions.** Messages typed while the agent works wait in a queue and send when
   it's done. After each reply, a small model suggests up to three next steps
   (`agent_runs.suggestions`).

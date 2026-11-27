@@ -5,6 +5,8 @@ import { getSupabase } from '~/lib/supabase/client'
 export type AgentRun = {
   id: string
   status: 'queued' | 'running' | 'interrupted' | 'completed' | 'failed' | 'aborted'
+  /** Build runs change the site; Chat runs only answer. */
+  mode: 'build' | 'chat'
   prompt: string
   checkpoint_before: string | null
   checkpoint_after: string | null
@@ -17,7 +19,7 @@ export type AgentRun = {
 }
 
 const COLUMNS =
-  'id, status, prompt, checkpoint_before, checkpoint_after, files_changed, credits_used, suggestions, created_at, finished_at'
+  'id, status, mode, prompt, checkpoint_before, checkpoint_after, files_changed, credits_used, suggestions, created_at, finished_at'
 
 /** Polling interval while a run is active (Realtime usually updates sooner). */
 const ACTIVE_POLL_MS = 4000

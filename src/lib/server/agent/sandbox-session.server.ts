@@ -46,6 +46,11 @@ export type SandboxSession = {
   readPaths: Set<string>
   /** Chat mode: text of this run's attached documents (they aren't copied into the project). */
   attachedTexts: Map<string, string>
+  /**
+   * A build run: while it works, the preview doesn't live-update (it would show half-written
+   * files and their errors). Every command renews the hold; the run's end releases it.
+   */
+  holdPreview: boolean
 }
 
 /**
@@ -74,6 +79,7 @@ export function projectSession(
     attachedImages: new Map(),
     readPaths: new Set(),
     attachedTexts: new Map(),
+    holdPreview: false,
   }
 }
 
@@ -130,6 +136,15 @@ export const relativePath = (absolute: string) => absolute.slice(SITE_DIR.length
 const ENV = 'export PATH="$HOME/.bun/bin:$PATH" CI=1 GIT_TERMINAL_PROMPT=0 FORCE_COLOR=0 NO_COLOR=1'
 
 /**
+ * While this file holds a future time (epoch seconds), the editor support in the sandbox's dev
+ * server (.siteformer/vite-plugin.ts) holds back the preview's live updates. A hold left behind
+ * (the server stopped mid-run) ends by itself this long after the run's last command.
+ */
+export const PREVIEW_HOLD_FILE = '/tmp/siteformer-hold'
+const PREVIEW_HOLD_SECONDS = 600
+const renewHold = `echo $(( $(date +%s) + ${PREVIEW_HOLD_SECONDS} )) > ${PREVIEW_HOLD_FILE} 2>/dev/null`
+
+/**
  * Runs a bash script in the project folder. `timeoutSeconds` is enforced INSIDE the sandbox
  * (`timeout`), so a hung command is killed there too, not just abandoned by us.
  */
@@ -139,7 +154,8 @@ export async function sh(
   { timeoutSeconds = 120, cwd = SITE_DIR }: { timeoutSeconds?: number; cwd?: string } = {},
 ): Promise<ExecResult> {
   if (session.signal.aborted) throw new SandboxError('Cancelled.')
-  const wrapped = `${ENV}; cd ${shellQuote(cwd)} && timeout -k 5 ${timeoutSeconds} bash -c ${shellQuote(script)}`
+  const hold = session.holdPreview ? `${renewHold}; ` : ''
+  const wrapped = `${ENV}; ${hold}cd ${shellQuote(cwd)} && timeout -k 5 ${timeoutSeconds} bash -c ${shellQuote(script)}`
   const result = await exec(
     session.sandboxId,
     wrapped,
