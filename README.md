@@ -70,8 +70,8 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
     `⌖ <h1> "…" at src/routes/index.tsx:23:9 on /` (the exact JSX location).
   - _Edit text_: click texts on the page and type; the card shows _N text changes · Cancel ·
     Save_. Save writes them all into the code in one checkpoint (Babel finds each element by its
-    source line: exact, no AI) and notes it in the chat; it needs credits left (no credits: _Get
-    credits_ instead). Cancel reloads the page. Texts that come from code get _Ask AI_ instead.
+    source line: exact, no AI, so no credits, on any plan) and notes it in the chat. Cancel
+    reloads the page. Texts that come from code get _Ask AI_ instead.
   - _Draw_: draw on the page (_Annotation · Undo · Redo · Clear_), then _Add to chat_. The
     sandbox's browser renders the same page at the same size and scroll with the lines on it, and
     that image is attached to the message (`agent_uploads.purpose = 'sketch'`: shown to the

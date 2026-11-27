@@ -1,7 +1,7 @@
 /**
  * The preview's editing tools on the server:
  * - Edit text: the user changed texts in the preview, then pressed Save: they're written straight
- *   into the code (one checkpoint, noted in the chat; no AI, but it needs credits left). A text
+ *   into the code (one checkpoint, noted in the chat; no AI, so no credits, on any plan). A text
  *   that comes from code can't be saved this way: the result says so and the editor offers the
  *   AI instead.
  * - Draw: the user drew on the preview; the page is rendered in the sandbox exactly as they saw
@@ -14,7 +14,6 @@ import { appendAssistantNote, hasActiveRun } from '~/lib/server/agent/runner.ser
 import { writeText } from '~/lib/server/agent/sandbox-session.server'
 import { renderSketch } from '~/lib/server/agent/tools/browser.server'
 import { saveUpload } from '~/lib/server/agent/uploads.server'
-import { requireCredits } from '~/lib/server/billing/credits.server'
 import { AppError, safely } from '~/lib/server/errors.server'
 import { log } from '~/lib/server/log.server'
 import { editablePath, readFile, sessionFor } from '~/lib/server/project-files.server'
@@ -87,7 +86,6 @@ export const saveTextEdits = createServerFn({ method: 'POST' })
   .handler(({ data, context }) =>
     safely('saveTextEdits', () =>
       oneAtATime(data.projectId, async (): Promise<TextSaveResult> => {
-        await requireCredits(context.user.id)
         const session = await sessionFor(context.user.id, data.projectId, allowEdit)
         if (await hasActiveRun(data.projectId)) {
           throw new AppError('The agent is working. Save when it’s done.', 'limit')

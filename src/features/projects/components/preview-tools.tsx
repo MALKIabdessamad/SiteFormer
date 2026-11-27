@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
 import {
   Loader2,
   MousePointer2,
@@ -121,13 +120,10 @@ function Label({ children, spinner = false }: { children: ReactNode; spinner?: b
 export function PreviewTools({
   editor,
   agentBusy,
-  outOfCredits,
   picked,
 }: {
   editor: VisualEditor
   agentBusy: boolean
-  /** No credits left: changed texts can't be saved. */
-  outOfCredits: boolean
   /** The element picked for the chat (its tag), if any. */
   picked: string | null
 }) {
@@ -139,7 +135,7 @@ export function PreviewTools({
   let content: ReactNode
   if (texts.length > 0 || busy === 'saving') {
     // Changed texts wait here until saved or cancelled.
-    state = busy === 'saving' ? 'saving' : `texts:${outOfCredits}:${agentBusy}:${notice?.message}`
+    state = busy === 'saving' ? 'saving' : `texts:${agentBusy}:${notice?.message}`
     content =
       busy === 'saving' ? (
         <>
@@ -155,9 +151,6 @@ export function PreviewTools({
               : texts.length === 1
                 ? '1 text change'
                 : `${texts.length} text changes`}
-            {outOfCredits && !notice && (
-              <span className="block text-[11px] text-faint">No credits left</span>
-            )}
           </Label>
           {notice && (
             <button
@@ -176,21 +169,15 @@ export function PreviewTools({
           >
             Cancel
           </button>
-          {outOfCredits ? (
-            <Link to="/billing" className={cn(pill, 'btn-sculpted')}>
-              Get credits
-            </Link>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void editor.saveTexts()}
-              disabled={agentBusy}
-              title={agentBusy ? 'Save when the agent is done' : undefined}
-              className={cn(pill, 'btn-sculpted')}
-            >
-              Save
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void editor.saveTexts()}
+            disabled={agentBusy}
+            title={agentBusy ? 'Save when the agent is done' : undefined}
+            className={cn(pill, 'btn-sculpted')}
+          >
+            Save
+          </button>
         </>
       )
   } else if (notice) {

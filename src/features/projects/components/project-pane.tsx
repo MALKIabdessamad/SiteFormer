@@ -148,7 +148,6 @@ export function ProjectPane({
                 <PreviewTools
                   editor={editor}
                   agentBusy={agentBusy}
-                  outOfCredits={account !== null && account.credits < 1}
                   picked={composer.picks[0]?.element.tag ?? null}
                 />
               </>
