@@ -72,6 +72,9 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
     Save_. Save writes them all into the code in one checkpoint (Babel finds each element by its
     source line: exact, no AI, so no credits, on any plan) and notes it in the chat. Cancel
     reloads the page. Texts that come from code get _Ask AI_ instead.
+  - Leaving a tool (its icon, Esc, or closing the bar) undoes what it started: the selected
+    element leaves the message, unsent lines go; changed texts are saved or cancelled first
+    (closing the bar cancels them). _Write message_ and _Add to chat_ keep what they add.
   - _Draw_: draw on the page (_Annotation · Undo · Redo · Clear_), then _Add to chat_. The
     sandbox's browser renders the same page at the same size and scroll with the lines on it, and
     that image is attached to the message (`agent_uploads.purpose = 'sketch'`: shown to the

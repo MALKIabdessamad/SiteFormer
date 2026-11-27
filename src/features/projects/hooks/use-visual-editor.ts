@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { referenceLine, type Composer, type ElementRef, type SendOptions } from '~/features/agent'
 import { toErrorMessage } from '~/lib/utils/errors'
 import { captureSketch, saveTextEdits } from '../api/visual-edit.functions'
@@ -73,11 +73,21 @@ export function useVisualEditor({
   const redraw = (update: (current: Drawing) => Drawing) =>
     setDrawing((d) => ({ view, ...update(d?.view === view ? d : EMPTY) }))
 
+  /**
+   * Leaving a tool undoes what it started and didn't finish: Select's element leaves the message
+   * (and its outline the page), unsent drawing lines go, a text being typed is put back.
+   */
   const setTool = (next: EditorTool | null) => {
+    if (chosen === 'select' && next !== 'select' && composer.picks.length) composer.setPicks([])
     setChosen(next)
     setNotice(null)
     setEditing(false)
     if (next !== 'draw') setDrawing(null)
+  }
+
+  /** Back to the tools (not while changed texts wait to be saved or cancelled, or mid-save). */
+  const back = () => {
+    if (!texts.length && !busy) setTool(null)
   }
 
   const bridge = usePreviewBridge(preview.url, frameKey, (event: BridgeEvent) => {
@@ -115,7 +125,7 @@ export function useVisualEditor({
         setPageError(null)
         break
       case 'escape':
-        setTool(null)
+        back()
         break
     }
   })
@@ -152,8 +162,33 @@ export function useVisualEditor({
     preview.reload()
   }
 
+  // Esc goes back to the tools from anywhere in the editor too: a click in the page never moves
+  // the keyboard there. Not while typing in a field, or with a menu open (Esc closes that).
+  const backLatest = useRef(back)
+  useEffect(() => {
+    backLatest.current = back
+  })
+  useEffect(() => {
+    if (tool === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const active = document.activeElement as HTMLElement | null
+      if (
+        active?.isContentEditable ||
+        active?.closest('input, textarea, select, [role=menu], [role=dialog], [role=listbox]')
+      ) {
+        return
+      }
+      backLatest.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tool])
+
+  /** Closing the tools leaves nothing behind (unsaved texts too). */
   const close = () => {
     if (texts.length) cancelTexts()
+    if (composer.picks.length) composer.setPicks([])
     setOpen(false)
     setChosen(null)
     setDrawing(null)
@@ -216,7 +251,7 @@ export function useVisualEditor({
     /** Picks a tool (picking the active one again turns it off). */
     choose: (next: EditorTool) => setTool(tool === next ? null : next),
     /** Back to the list of tools. */
-    back: () => setTool(null),
+    back,
     editing,
     busy,
     stalled: waiting && stalledFor === frameKey,
