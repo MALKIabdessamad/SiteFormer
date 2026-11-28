@@ -26,6 +26,12 @@ import { resolveUploads, saveUpload } from './uploads.server'
 const MAX_PROMPT = 8000
 /** A from-start join waits this long for a run's first chunk (queued runs write one at once). */
 const JOIN_DEADLINE_MS = 5000
+/** Prefix of the run log's resume offsets ("memory:v1:<run id>:<n>", see @tanstack/ai). */
+const OFFSET_PREFIX = 'memory:v1:'
+
+// Hydrating the chat and following runs read the database and hold connections: cap per user
+// (generous: reloads and reconnects stay far below it).
+const allowRead = rateLimiter(300)
 
 const STATUS: Record<AppError['code'], number> = {
   unauthorized: 401,
@@ -140,13 +146,23 @@ export async function postMessage(request: Request): Promise<Response> {
  */
 export async function getAgent(request: Request): Promise<Response> {
   const user = await authenticate(request.headers.get('authorization') ?? undefined)
+  if (!allowRead(user.id)) throw new AppError('Too many requests. Wait a moment.', 'limit')
   const url = new URL(request.url)
   const runId = url.searchParams.get('runId') ?? request.headers.get('x-run-id')
   if (runId) {
     const run = isValidRunId(runId) ? await getRunRow(runId) : null
     if (!run || run.user_id !== user.id) throw new AppError('Run not found.', 'not_found')
+    // Stream exactly the run checked above. Handed the request, the library would take the run
+    // from the X-Run-Id header or from the resume offset first, and those can name another run.
+    const offset = request.headers.get('last-event-id') ?? url.searchParams.get('offset')
+    if (
+      offset?.startsWith(OFFSET_PREFIX) &&
+      !offset.startsWith(`${OFFSET_PREFIX}${encodeURIComponent(runId)}:`)
+    ) {
+      throw new AppError('Run not found.', 'not_found')
+    }
     return resumeServerSentEventsResponse({
-      adapter: memoryStream(request, { firstChunkDeadlineMs: JOIN_DEADLINE_MS }),
+      adapter: memoryStream({ runId, offset }, { firstChunkDeadlineMs: JOIN_DEADLINE_MS }),
     })
   }
   const threadId = url.searchParams.get('threadId') ?? ''
@@ -159,7 +175,10 @@ export async function getAgent(request: Request): Promise<Response> {
       ...errorFields(error),
     }),
   )
-  return reconstructChat(persistence, request, { authorize: async () => true })
+  // The library reads the thread from the same query parameter; it must be the project checked.
+  return reconstructChat(persistence, request, {
+    authorize: async (thread) => thread === project.id,
+  })
 }
 
 /** POST /api/agent?action=cancel  body { runId } */

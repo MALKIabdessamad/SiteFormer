@@ -22,6 +22,8 @@ export class SandboxError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    /** The message describes a failed Agent37 call (for the logs), not something to show users. */
+    readonly internal = false,
   ) {
     super(message)
     this.name = 'SandboxError'
@@ -81,7 +83,7 @@ async function request(
       if (attempt >= retries || !retryNetworkErrors) {
         const reason =
           error instanceof Error && error.name === 'TimeoutError' ? 'timed out' : 'failed'
-        throw new SandboxError(`Agent37 request ${reason}.`)
+        throw new SandboxError(`Agent37 request ${reason}.`, undefined, true)
       }
     }
     if (response && (!retryOn.has(response.status) || attempt >= retries)) return response
@@ -102,7 +104,11 @@ function apiHeaders(): HeadersInit {
 async function ensureOk(response: Response, what: string): Promise<Response> {
   if (response.ok) return response
   const body = (await response.text().catch(() => '')).slice(0, 160)
-  throw new SandboxError(`Agent37 ${what} failed (${response.status}): ${body}`, response.status)
+  throw new SandboxError(
+    `Agent37 ${what} failed (${response.status}): ${body}`,
+    response.status,
+    true,
+  )
 }
 
 export async function createInstance(input: {

@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import {
+  messageLabel,
   referenceLine,
   referenceLinesOf,
   splitReferences,
@@ -137,4 +138,12 @@ test('an edited message keeps its element lines as they were', () => {
   const line = '⌖ <h1> "Hi" at src/routes/index.tsx:5:7 on /'
   expect(referenceLinesOf(`Make it red\n${line}\n`)).toEqual([line])
   expect(referenceLinesOf('No elements here')).toEqual([])
+})
+
+test('a message label leaves the element lines out', () => {
+  const element = { loc: 'src/routes/index.tsx:4:7', tag: 'h1', text: 'Hi', path: '/' }
+  const message = `Make this   bigger\nand bold\n${referenceLine(element)}`
+  expect(messageLabel(message, 80)).toBe('Make this bigger and bold')
+  expect(messageLabel(message, 10)).toBe('Make this…')
+  expect(messageLabel(referenceLine(element), 80)).toBe('')
 })

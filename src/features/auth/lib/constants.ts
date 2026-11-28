@@ -1,5 +1,9 @@
-/** Must match Authentication → Providers → Email → minimum password length in Supabase. */
-export const MIN_PASSWORD_LENGTH = 6
+/**
+ * Shortest new password (sign-up, reset). Set the same minimum in Supabase (Authentication →
+ * Sign In / Providers → Email) so it's enforced there too. Signing in doesn't check it: accounts
+ * made under the old minimum of 6 keep working.
+ */
+export const MIN_PASSWORD_LENGTH = 8
 
 export type AuthMode = 'signin' | 'signup'
 

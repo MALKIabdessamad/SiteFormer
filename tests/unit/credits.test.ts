@@ -24,7 +24,7 @@ describe('billableTokens', () => {
 })
 
 test('prices', () => {
-  expect(formatPrice(0)).toBe('Free')
+  expect(formatPrice(0)).toBe('$0')
   expect(formatPrice(2000)).toBe('$20')
   expect(formatPrice(1999)).toBe('$19.99')
 })

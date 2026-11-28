@@ -170,7 +170,9 @@ src/
 │       ├── storage.server.ts   # Storage listing/deletion (files don't cascade)
 │       ├── maintenance.server.ts  # Periodic cleanup of orphaned sandboxes/files/uploads
 │       ├── billing/            # Plans + credits (charge_tokens / grant_credits)
-│       ├── agent/              # Runner (queue, leases, recovery), tools, persistence, memory,
+│       ├── agent/              # Runner (queue, leases, recovery), transcript (notes, taking
+│       │                       # back the latest message), tools (the in-sandbox browser
+│       │                       # script is tools/browser-runner.cjs.txt), persistence, memory,
 │       │                       # middleware (vision, credits, logging), uploads, screenshots
 │       ├── sandbox/            # agent37.server.ts (API client), provision.server.ts (setup),
 │       │                       # editor/ (the bridge files written into every sandbox)
@@ -252,6 +254,24 @@ renews plan credits monthly.
 deletes Agent37 sandboxes and storage folders whose project no longer exists (e.g. after an
 account is deleted in Supabase) and uploads that were attached but never sent within a day.
 `projects` and `agent_runs` are in the `supabase_realtime` publication.
+
+## Security
+
+- Every server function and API route verifies the Supabase access token and checks that the
+  project, run or upload belongs to the caller. Following a live run streams exactly the run that
+  was checked (never one named by a header or a resume offset), and loading a chat only loads
+  the project that was checked.
+- The preview is the user's own (untrusted) code on another origin: the frame is sandboxed (it
+  can't navigate the app), and the editor only accepts well-formed bridge messages from that
+  frame, with paths that stay on the preview site.
+- The agent works inside the project folder of its own sandbox. The server itself only calls
+  fixed hosts (Agent37, OpenRouter, Supabase); pages the agent visits load in the sandbox. Stored
+  screenshots it asks for must be exactly `<project>/<run>/<file>` of its own project.
+- Per-user rate limits (in-process): creating projects 20/hour, opening one 30/min, chat loads
+  and run streams 300/min, uploads 40/min, code reads 120/min, saves 30/min, text edits 60/min,
+  drawings 20/min, error reports 20/min.
+- New passwords need 8+ characters. In Supabase → Authentication, set the same minimum and turn
+  on leaked password protection (both are dashboard settings).
 
 ## Deploy to Railway
 

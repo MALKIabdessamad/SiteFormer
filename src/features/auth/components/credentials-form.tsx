@@ -88,7 +88,7 @@ export function CredentialsForm({ mode, onModeChange, onConfirmationSent }: Cred
             id={ids.password}
             name="password"
             required
-            minLength={MIN_PASSWORD_LENGTH}
+            minLength={mode === 'signup' ? MIN_PASSWORD_LENGTH : undefined}
             autoComplete={text.autoComplete}
             placeholder={text.passwordPlaceholder}
             value={password}

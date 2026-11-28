@@ -34,6 +34,9 @@ const ModeInput = validate(
   z.object({ projectId: z.uuid('Project not found.'), mode: z.enum(PROJECT_MODES) }),
 )
 const allowModeChange = rateLimiter(60)
+// Each creation sets up a paid sandbox (deleting doesn't make creating free); each open wakes one.
+const allowCreate = rateLimiter(20, 60 * 60_000)
+const allowOpen = rateLimiter(30)
 
 const CreateInput = validate(
   z.object({
@@ -79,6 +82,12 @@ export const createProject = createServerFn({ method: 'POST' })
     safely('createProject', async () => {
       const db = supabaseAdmin()
       const userId = context.user.id
+      if (!allowCreate(userId)) {
+        throw new AppError(
+          'You’ve created a lot of projects in a short time. Try again later.',
+          'limit',
+        )
+      }
       // Plan limits: projects per plan, and credits to run the first message.
       const plan = await requireCredits(userId)
       const { count, error: countError } = await db
@@ -158,6 +167,8 @@ export const openProject = createServerFn({ method: 'POST' })
   .validator(ProjectIdInput)
   .handler(({ data, context }) =>
     safely('openProject', async () => {
+      if (!allowOpen(context.user.id))
+        throw new AppError('Too many requests. Wait a moment.', 'limit')
       const project = await ownedProject(context.user.id, data.projectId)
       background(recoverRuns(project.id))
       if (project.status === 'provisioning' && !isBusy(project.id)) {

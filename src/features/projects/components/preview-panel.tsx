@@ -59,7 +59,12 @@ export function usePreview(project: Project, awake: boolean) {
 }
 export type Preview = ReturnType<typeof usePreview>
 
-const href = (url: string, path: string) => new URL(path, url).toString()
+/** The preview's address for `path`, never another site (paths can come from the page itself). */
+function href(url: string, path: string): string {
+  const site = new URL(url)
+  const target = new URL(path, site)
+  return target.origin === site.origin ? target.toString() : site.toString()
+}
 
 /** Device size (one button: desktop → tablet → phone), the path bar and "open in new tab". */
 export function PreviewControls({ projectId, preview }: { projectId: string; preview: Preview }) {

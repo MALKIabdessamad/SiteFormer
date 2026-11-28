@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Check, Coins, FlaskConical, Loader2 } from 'lucide-react'
+import { messageLabel } from '~/features/agent'
 import { getSupabase } from '~/lib/supabase/client'
 import { cn } from '~/lib/utils/cn'
 import { toErrorMessage } from '~/lib/utils/errors'
@@ -25,8 +26,13 @@ type LedgerRow = {
 }
 
 const FEATURES: Record<PlanId, Array<string>> = {
-  free: ['50 credits to start', 'Up to 3 projects', 'Preview, code editor, checkpoints'],
-  pro: ['1,000 credits every month', 'Up to 20 projects', 'Everything in Free'],
+  free: ['50 credits to start', 'Up to 3 projects', 'Preview, editing tools, checkpoints'],
+  pro: [
+    '1,000 credits every month',
+    'Up to 20 projects',
+    'Edit the code yourself',
+    'Everything in Free',
+  ],
   max: ['5,000 credits every month', 'Up to 50 projects', 'Everything in Pro'],
 }
 
@@ -42,7 +48,7 @@ function ledgerLabel(row: LedgerRow): string {
     case 'pack':
       return 'Credit pack'
     case 'run':
-      return row.agent_runs?.prompt.replace(/\s+/g, ' ').slice(0, 70) || 'AI message'
+      return messageLabel(row.agent_runs?.prompt ?? '', 70) || 'AI message'
     default:
       return 'Adjustment'
   }
@@ -188,9 +194,7 @@ export function BillingScreen() {
                 </div>
                 <p className="mt-2 text-3xl font-bold">
                   {formatPrice(plan.price_cents)}
-                  {plan.price_cents > 0 && (
-                    <span className="text-sm font-normal text-dim"> /month</span>
-                  )}
+                  <span className="text-sm font-normal text-dim"> /month</span>
                 </p>
                 <ul className="mt-4 flex-1 space-y-2 text-sm text-dim">
                   {FEATURES[plan.id].map((feature) => (

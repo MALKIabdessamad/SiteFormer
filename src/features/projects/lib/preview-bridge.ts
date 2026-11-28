@@ -33,10 +33,12 @@ export type BridgeCommand =
 const str = (value: unknown, max = 2000): value is string =>
   typeof value === 'string' && value.length <= max
 const int = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0
+/** A path on the preview's own site ("/about"; never "//host" or "/\host", another site). */
+const path = (value: unknown): value is string => str(value) && /^\/(?![/\\])/.test(value)
 
 function isElement(value: unknown): value is ElementRef {
   const el = value as Partial<ElementRef> | null
-  return !!el && str(el.loc, 300) && str(el.tag, 40) && str(el.text, 400) && str(el.path)
+  return !!el && str(el.loc, 300) && str(el.tag, 40) && str(el.text, 400) && path(el.path)
 }
 
 /** A message from the preview bridge, or null when it isn't one (or is malformed). */
@@ -52,7 +54,7 @@ export function parseBridgeEvent(data: unknown): BridgeEvent | null {
       return { type: d['type'] }
     case 'ready':
     case 'location':
-      return str(d['path']) ? { type: d['type'], path: d['path'] } : null
+      return path(d['path']) ? { type: d['type'], path: d['path'] } : null
     case 'pick':
       return int(d['n']) && isElement(d['element'])
         ? { type: 'pick', n: d['n'], element: d['element'] }
@@ -68,7 +70,7 @@ export function parseBridgeEvent(data: unknown): BridgeEvent | null {
           }
         : null
     case 'viewport':
-      return int(d['scrollX']) && int(d['scrollY']) && str(d['path'])
+      return int(d['scrollX']) && int(d['scrollY']) && path(d['path'])
         ? { type: 'viewport', scrollX: d['scrollX'], scrollY: d['scrollY'], path: d['path'] }
         : null
     case 'error':
@@ -78,7 +80,7 @@ export function parseBridgeEvent(data: unknown): BridgeEvent | null {
             kind: d['kind'] === 'build' ? 'build' : 'runtime',
             message: d['message'],
             stack: str(d['stack'], 4000) ? d['stack'] : '',
-            path: str(d['path']) ? d['path'] : '/',
+            path: path(d['path']) ? d['path'] : '/',
           }
         : null
     default:

@@ -13,7 +13,7 @@ export function NotFound() {
           to="/"
           className="mt-8 inline-flex h-11 btn-sculpted items-center rounded-full px-6 text-sm font-semibold"
         >
-          Back to sign in
+          Back to home
         </Link>
       </div>
     </main>

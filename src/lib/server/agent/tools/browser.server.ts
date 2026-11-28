@@ -19,199 +19,11 @@ import {
   ToolError,
   type SandboxSession,
 } from '../sandbox-session.server'
+import { isStoredImagePath, isValidStoredImagePath } from '../stored-images'
 import { detectType } from '../uploads.server'
-
 import { BROWSER_DIR, BROWSER_ENV, BROWSER_INSTALL_SCRIPT } from '../../sandbox/browser-install'
-
-/** Runner executed with node inside the sandbox. Input: base64 JSON job. Output: one JSON line. */
-const RUNNER = String.raw`
-const { chromium } = require('playwright-core')
-// The job comes base64-encoded as the argument, or in a file ("@/tmp/job") when it's large.
-const arg = process.argv[2]
-const job = JSON.parse(Buffer.from(arg.startsWith('@') ? require('node:fs').readFileSync(arg.slice(1), 'utf8') : arg, 'base64').toString('utf8'))
-const cap = (s, n) => (s.length > n ? s.slice(0, n) + '…' : s)
-const fs = require('node:fs')
-async function optimize() {
-  // Re-encode a raster image to WebP (max job.maxDim px) with the browser's canvas.
-  const browser = await chromium.launch()
-  try {
-    const page = await browser.newPage()
-    const src = 'data:' + job.mime + ';base64,' + fs.readFileSync(job.file).toString('base64')
-    const b64 = await page.evaluate(async ({ src, maxDim, quality }) => {
-      const img = new Image()
-      img.src = src
-      await img.decode()
-      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight))
-      const c = document.createElement('canvas')
-      c.width = Math.round(img.naturalWidth * scale)
-      c.height = Math.round(img.naturalHeight * scale)
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-      return c.toDataURL('image/webp', quality).split(',')[1]
-    }, { src, maxDim: job.maxDim || 2000, quality: job.quality || 0.82 })
-    fs.writeFileSync(job.out, Buffer.from(b64, 'base64'))
-    process.stdout.write(JSON.stringify({ ok: true, bytes: fs.statSync(job.out).size }))
-  } finally {
-    await browser.close()
-  }
-}
-async function sketch() {
-  // The page as the user saw it (same size and scroll), with their strokes drawn on top.
-  const browser = await chromium.launch()
-  try {
-    const page = await browser.newPage({ viewport: { width: job.width, height: job.height }, deviceScaleFactor: 1 })
-    await page.goto(job.url, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => null)
-    await page.evaluate(([x, y]) => window.scrollTo(x, y), [job.scrollX, job.scrollY])
-    await page.waitForTimeout(300)
-    await page.evaluate((strokes) => {
-      const ns = 'http://www.w3.org/2000/svg'
-      const svg = document.createElementNS(ns, 'svg')
-      svg.setAttribute('style', 'position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:none')
-      for (const points of strokes) {
-        const line = document.createElementNS(ns, 'polyline')
-        // A single point (a dot) needs a second one to be drawn.
-        const all = points.length === 1 ? [points[0], [points[0][0] + 0.1, points[0][1]]] : points
-        line.setAttribute('points', all.map((p) => p[0] + ',' + p[1]).join(' '))
-        line.setAttribute('fill', 'none')
-        line.setAttribute('stroke', '#f43f5e')
-        line.setAttribute('stroke-width', '4')
-        line.setAttribute('stroke-linecap', 'round')
-        line.setAttribute('stroke-linejoin', 'round')
-        svg.appendChild(line)
-      }
-      document.documentElement.appendChild(svg)
-    }, job.strokes)
-    const shot = await page.screenshot({ type: 'jpeg', quality: 72 })
-    process.stdout.write(JSON.stringify({ ok: true, screenshot: shot.toString('base64') }))
-  } finally {
-    await browser.close()
-  }
-}
-;(async () => {
-  if (job.mode === 'optimize') return optimize()
-  if (job.mode === 'sketch') return sketch()
-  const out = { ok: true, consoleErrors: [], failedRequests: [], steps: [] }
-  const browser = await chromium.launch()
-  try {
-    const mobile = job.viewport === 'mobile'
-    const viewport = mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 }
-    const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 1 })
-    const page = await context.newPage()
-    const note = (list, line) => { if (list.length < 15 && !list.includes(line)) list.push(cap(line, 300)) }
-    page.on('console', (m) => { if (m.type() === 'error') note(out.consoleErrors, m.text()) })
-    page.on('pageerror', (e) => note(out.consoleErrors, 'Uncaught: ' + e.message))
-    page.on('requestfailed', (r) => note(out.failedRequests, r.method() + ' ' + r.url() + ' — ' + (r.failure() || {}).errorText))
-    page.on('response', (r) => { if (r.status() >= 400) note(out.failedRequests, r.status() + ' ' + r.url()) })
-    const res = await page.goto(job.url, { waitUntil: 'networkidle', timeout: 30000 }).catch((e) => { out.navigationError = cap(e.message.split('\n')[0], 300); return null })
-    out.status = res ? res.status() : null
-    for (const a of job.actions || []) {
-      const label = a.type + (a.selector ? ' ' + a.selector : '') + (a.text ? ' "' + cap(a.text, 40) + '"' : '')
-      try {
-        if (a.type === 'click') await page.locator(a.selector).first().click({ timeout: 8000 })
-        else if (a.type === 'fill') await page.locator(a.selector).first().fill(a.text || '', { timeout: 8000 })
-        else if (a.type === 'press') await page.keyboard.press(a.key || 'Enter')
-        else if (a.type === 'hover') await page.locator(a.selector).first().hover({ timeout: 8000 })
-        else if (a.type === 'scroll') await page.mouse.wheel(0, a.pixels || 800)
-        else if (a.type === 'wait') await page.waitForTimeout(Math.min(a.ms || 500, 5000))
-        else if (a.type === 'goto') await page.goto(new URL(a.path || '/', job.url).href, { waitUntil: 'networkidle', timeout: 30000 })
-        out.steps.push('✓ ' + label)
-      } catch (e) {
-        out.steps.push('✗ ' + label + ': ' + cap(String(e.message).split('\n')[0], 200))
-        break
-      }
-    }
-    await page.waitForTimeout(400)
-    out.url = page.url()
-    out.title = await page.title()
-    if (job.outline) {
-      out.outline = await page.evaluate(() => {
-        const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)
-        const pick = (sel, n) => Array.from(document.querySelectorAll(sel)).slice(0, n)
-        return {
-          headings: pick('h1,h2,h3', 25).map((h) => h.tagName.toLowerCase() + ': ' + text(h)),
-          links: pick('a[href]', 25).map((a) => text(a) + ' → ' + a.getAttribute('href')),
-          buttons: pick('button,[role=button]', 20).map(text),
-          inputs: pick('input,textarea,select', 15).map((i) => (i.getAttribute('name') || i.getAttribute('placeholder') || i.type || i.tagName).slice(0, 60)),
-          imagesWithoutAlt: pick('img:not([alt])', 10).map((i) => i.getAttribute('src')),
-          horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-          text: (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1500),
-        }
-      })
-    }
-    if (job.audit) {
-      await page.addScriptTag({ path: require.resolve('axe-core/axe.min.js') })
-      const axe = await page.evaluate(async () => {
-        const r = await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa', 'best-practice'], resultTypes: ['violations'] })
-        return r.violations.map((v) => ({
-          rule: v.id,
-          impact: v.impact,
-          problem: v.help,
-          count: v.nodes.length,
-          example: (v.nodes[0] && v.nodes[0].target && v.nodes[0].target.join(' ')) || '',
-        }))
-      })
-      const order = { critical: 0, serious: 1, moderate: 2, minor: 3 }
-      out.accessibility = axe.sort((a, b) => (order[a.impact] ?? 4) - (order[b.impact] ?? 4)).slice(0, 12)
-      out.seo = await page.evaluate(() => {
-        const meta = (n) => document.querySelector('meta[name="' + n + '"]')
-        const prop = (n) => document.querySelector('meta[property="' + n + '"]')
-        const desc = meta('description') && meta('description').getAttribute('content')
-        return {
-          title: document.title,
-          titleLength: document.title.length,
-          metaDescriptionLength: desc ? desc.length : 0,
-          h1Count: document.querySelectorAll('h1').length,
-          htmlLang: document.documentElement.getAttribute('lang') || null,
-          viewportMeta: Boolean(meta('viewport')),
-          canonical: Boolean(document.querySelector('link[rel="canonical"]')),
-          openGraph: Boolean(prop('og:title') && prop('og:description')),
-          imagesWithoutAlt: document.querySelectorAll('img:not([alt])').length,
-          linksWithoutText: Array.from(document.querySelectorAll('a')).filter((a) => !(a.innerText || a.getAttribute('aria-label') || '').trim()).length,
-        }
-      })
-      out.performance = await page.evaluate(async () => {
-        const nav = performance.getEntriesByType('navigation')[0] || {}
-        const lcp = await new Promise((resolve) => {
-          let value = null
-          try {
-            new PerformanceObserver((list) => { const e = list.getEntries(); if (e.length) value = e[e.length - 1].startTime }).observe({ type: 'largest-contentful-paint', buffered: true })
-          } catch (e) {}
-          setTimeout(() => resolve(value), 300)
-        })
-        let cls = 0
-        try { for (const e of performance.getEntriesByType('layout-shift')) if (!e.hadRecentInput) cls += e.value } catch (e) {}
-        const resources = performance.getEntriesByType('resource')
-        const heavy = resources.filter((r) => (r.transferSize || r.encodedBodySize || 0) > 200000)
-          .sort((a, b) => (b.transferSize || b.encodedBodySize) - (a.transferSize || a.encodedBodySize)).slice(0, 5)
-          .map((r) => ({ url: r.name.slice(0, 120), kb: Math.round((r.transferSize || r.encodedBodySize) / 1024) }))
-        const oversized = Array.from(document.images).filter((i) => i.naturalWidth > 0 && i.clientWidth > 0 && i.naturalWidth > i.clientWidth * 2.5)
-          .slice(0, 5).map((i) => ({ src: (i.currentSrc || i.src).slice(0, 120), natural: i.naturalWidth, shown: i.clientWidth }))
-        return {
-          note: 'Measured on the dev server (unminified); compare relative changes, not absolute numbers.',
-          ttfbMs: Math.round(nav.responseStart || 0),
-          domContentLoadedMs: Math.round(nav.domContentLoadedEventEnd || 0),
-          loadMs: Math.round(nav.loadEventEnd || 0),
-          lcpMs: lcp === null ? null : Math.round(lcp),
-          cls: Math.round(cls * 1000) / 1000,
-          requests: resources.length + 1,
-          transferKb: Math.round(resources.reduce((s, r) => s + (r.transferSize || 0), nav.transferSize || 0) / 1024),
-          heavyResources: heavy,
-          oversizedImages: oversized,
-        }
-      })
-    }
-    if (job.screenshot) {
-      const height = job.fullPage
-        ? Math.min(await page.evaluate(() => document.documentElement.scrollHeight), 4000)
-        : viewport.height
-      const shot = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: !!job.fullPage, clip: { x: 0, y: 0, width: viewport.width, height } })
-      out.screenshot = shot.toString('base64')
-    }
-  } finally {
-    await browser.close()
-  }
-  process.stdout.write(JSON.stringify(out))
-})().catch((e) => process.stdout.write(JSON.stringify({ ok: false, error: String(e && e.message || e).split('\n')[0] })))
-`
+// Runner executed with node inside the sandbox. Input: base64 JSON job. Output: one JSON line.
+import RUNNER from './browser-runner.cjs.txt?raw'
 
 /** Installs the browser if needed. Waits (lock) if the background install is still running. */
 async function ensureBrowser(session: SandboxSession): Promise<void> {
@@ -256,16 +68,18 @@ type BrowserResult = {
   screenshot?: string
 }
 
+/** A page of the user's own site (its dev server in the sandbox), never another host. */
+function pageUrl(session: SandboxSession, path: string): string {
+  const site = `http://localhost:${session.previewPort}`
+  const target = new URL(path.startsWith('/') ? path : `/${path}`, site)
+  return target.origin === site ? target.href : `${site}/`
+}
+
 async function runBrowser(session: SandboxSession, job: BrowserJob): Promise<BrowserResult> {
   await ensureBrowser(session)
   const runner = `${BROWSER_DIR}/runner.cjs`
   const runnerB64 = Buffer.from(RUNNER).toString('base64')
-  const url =
-    job.url ??
-    new URL(
-      job.path.startsWith('/') ? job.path : `/${job.path}`,
-      `http://localhost:${session.previewPort}`,
-    ).href
+  const url = job.url ?? pageUrl(session, job.path)
   const input = Buffer.from(JSON.stringify({ ...job, url })).toString('base64')
   // The runner is (re)written every call: tiny, and guarantees the current version.
   const result = await sh(
@@ -293,7 +107,7 @@ export type SketchJob = {
 /** A JPEG of the page as the user saw it, with their drawing on top (for the chat). */
 export async function renderSketch(session: SandboxSession, job: SketchJob): Promise<Buffer> {
   await ensureBrowser(session)
-  const url = new URL(job.path, `http://localhost:${session.previewPort}`).href
+  const url = pageUrl(session, job.path)
   const input = Buffer.from(JSON.stringify({ ...job, url, mode: 'sketch' })).toString('base64')
   // Large drawings don't fit on a command line: stage the job in a file.
   const jobFile = `/tmp/sf-sketch-${crypto.randomUUID()}.json`
@@ -632,7 +446,10 @@ export function browserTools(session: SandboxSession) {
         reason: `Image view budget for this run (${MAX_IMAGE_VIEWS_PER_RUN}) is used up.`,
       }
     }
-    const stored = path.startsWith(`${session.projectId}/`)
+    const stored = isStoredImagePath(session.projectId, path)
+    if (stored && !isValidStoredImagePath(session.projectId, path)) {
+      throw new ToolError('Screenshot not found.')
+    }
     // Stored screenshots never change; project files can, so key them by workspace version.
     const key = stored ? `view|${path}` : `view|${path}|${session.workspaceVersion}`
     if (session.screenshotVersions.has(key)) {

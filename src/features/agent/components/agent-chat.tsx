@@ -1,16 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import {
-  ArrowUp,
-  ChevronRight,
-  Clock,
-  Coins,
-  History,
-  Loader2,
-  PencilLine,
-  Square,
-  Trash2,
-} from 'lucide-react'
+import { ArrowUp, Loader2, Square } from 'lucide-react'
 import { reportClientError } from '~/lib/report-error'
 import { cn } from '~/lib/utils/cn'
 import type { Project, ProjectMode } from '~/features/projects'
@@ -21,15 +11,13 @@ import { rewindLatestMessage } from '../api/checkpoints.functions'
 import { messageUploads, uploadParts, type Upload } from '../lib/attachments'
 import { referenceLine, referenceLinesOf, splitReferences } from '../lib/references'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
+import { ChatNote, MAX_MESSAGE, MessageEditor, ReplyBody, UserMessage } from './chat-message'
+import { QueuedMessages, Suggestions } from './composer-parts'
 import { ElementChip } from './element-chip'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
-import { buildTurns, type Segment, type Turn } from '../lib/turns'
-import { Markdown } from './markdown'
+import { buildTurns, type Turn } from '../lib/turns'
 import { isModeShortcut, ModeMenu, nextMode } from './mode-menu'
 import { ReplyActions } from './reply-actions'
-import { PlanCard, ToolStep } from './tool-step'
-
-const MAX_MESSAGE = 8000
 
 type AgentChatProps = {
   project: Project
@@ -85,13 +73,18 @@ export function AgentChat({
 
   const streaming = chat.isLoading || chat.status === 'streaming' || chat.status === 'submitted'
   const busy = streaming || Boolean(activeRun)
-  // The server takes the next message once the last run is fully done (checkpoint written).
+  // The server takes the next message once the last run is fully done (checkpoint written), and
+  // the chat once the conversation has loaded: a message sent before that would take the chat
+  // over and leave the earlier messages out (it waits in the queue for a moment instead).
   const lastRun = runs.at(-1)
-  const free = !busy && (!lastRun || isSettledRun(lastRun))
+  const free = !busy && !chat.isHydrating && (!lastRun || isSettledRun(lastRun))
   // One-click next steps for the last reply, on top of the composer.
   const suggestions = (free && lastRun?.suggestions) || []
   const turns = useMemo(() => buildTurns(chat.messages, streaming), [chat.messages, streaming])
   const userTurns = turns.filter((turn) => turn.user !== null)
+  // Each message has its run, in order. If the chat shows fewer messages than there are runs (the
+  // earlier ones didn't load), the ones shown are the latest: count from the end.
+  const firstRun = Math.max(0, runs.length - userTurns.length)
   const editable =
     free &&
     !outOfCredits &&
@@ -334,20 +327,22 @@ export function AgentChat({
             <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading conversation" />
           </li>
         )}
+        {!chat.isHydrating && turns.length === 0 && !busy && (
+          <li className="grid h-full place-items-center px-6 text-center">
+            <p className="max-w-[17rem] text-sm text-balance text-dim">
+              Tell the AI what to build or change. You’ll see it happen in the preview.
+            </p>
+          </li>
+        )}
         {turns.map((turn, index) => {
           const run =
             turn.user !== null
-              ? runs[turns.slice(0, index).filter((t) => t.user !== null).length]
+              ? runs[firstRun + turns.slice(0, index).filter((t) => t.user !== null).length]
               : undefined
           const finished = isSettledRun(run)
           // The reply is over when its run settled, or (last turn) when the agent isn't busy.
           const settled = finished || index < turns.length - 1 || !busy
           const completed = settled && run?.status !== 'failed' && run?.status !== 'aborted'
-          const plans = turn.segments.filter(
-            (s): s is Extract<Segment, { kind: 'tool' }> =>
-              s.kind === 'tool' && s.step.name === 'update_plan',
-          )
-          const latestPlan = plans.at(-1)?.step.input.steps
           return (
             <li key={turn.key} className="space-y-2">
               {turn.attachments.length > 0 && <MessageAttachments ids={turn.attachments} />}
@@ -365,24 +360,7 @@ export function AgentChat({
                     onEdit={editable === turn.key ? () => setEditing(turn.key) : undefined}
                   />
                 ))}
-              <div className="space-y-1.5">
-                {groupSegments(turn.segments).map((group) =>
-                  group.kind === 'tools' ? (
-                    <ToolGroup key={group.key} segments={group.segments} />
-                  ) : group.segment.kind === 'text' ? (
-                    <Markdown key={group.key} text={group.segment.text} />
-                  ) : group.segment.kind === 'thinking' ? (
-                    <Thinking key={group.key} text={group.segment.text} />
-                  ) : group.segment.key === plans[0]?.key ? (
-                    <PlanCard
-                      key={group.key}
-                      steps={latestPlan}
-                      settled={settled}
-                      completed={completed}
-                    />
-                  ) : null,
-                )}
-              </div>
+              <ReplyBody segments={turn.segments} settled={settled} completed={completed} />
               {finished && run && (
                 <ReplyActions
                   projectId={project.id}
@@ -394,27 +372,7 @@ export function AgentChat({
                 />
               )}
               {turn.notes.map((note, n) => (
-                <p
-                  key={n}
-                  className="mx-auto flex w-fit max-w-full items-center gap-1.5 rounded-full border bg-ink/[0.03] px-3 py-1 text-[11px] text-dim"
-                >
-                  {note.startsWith('✎') ? (
-                    <PencilLine className="h-3 w-3 shrink-0 text-signal" aria-hidden />
-                  ) : note.startsWith('⚠') ? (
-                    <Coins className="h-3 w-3 shrink-0 text-danger" aria-hidden />
-                  ) : (
-                    <History className="h-3 w-3 shrink-0" aria-hidden />
-                  )}
-                  <span className="whitespace-normal">{note.replace(/^(↩︎|✎|⚠)\s*/, '')}</span>
-                  {note.startsWith('⚠') && (
-                    <Link
-                      to="/billing"
-                      className="shrink-0 font-semibold text-signal hover:underline"
-                    >
-                      Get credits
-                    </Link>
-                  )}
-                </p>
+                <ChatNote key={n} note={note} />
               ))}
             </li>
           )
@@ -469,67 +427,12 @@ export function AgentChat({
             {sendError || chat.error?.message}
           </p>
         )}
-        {suggestions.length > 0 && (
-          <div
-            aria-label="Suggested next steps"
-            className="-mx-3 mb-2 no-scrollbar flex gap-1.5 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)] px-3"
-          >
-            {suggestions.map((suggestion) => (
-              <button
-                key={suggestion}
-                type="button"
-                onClick={() => void external.current(suggestion)}
-                disabled={outOfCredits}
-                title={suggestion}
-                className="h-8 max-w-[16rem] shrink-0 truncate rounded-full border bg-raised px-3 text-xs text-dim transition-colors hover:border-signal/50 hover:text-ink disabled:opacity-50"
-              >
-                {suggestion}
-              </button>
-            ))}
-          </div>
-        )}
-        {composer.queue.length > 0 && (
-          <ul aria-label="Queued messages" className="mb-2 space-y-1">
-            {composer.queue.map((item) => {
-              const files = item.attachments?.length ?? item.uploads.length
-              return (
-                <li
-                  key={item.id}
-                  title="Sends when the agent is done"
-                  className="flex items-center gap-1 rounded-xl border bg-ink/[0.02] py-1 pr-1 pl-3 text-xs text-dim"
-                >
-                  <Clock className="mr-1 h-3.5 w-3.5 shrink-0 text-faint" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">
-                    {splitReferences(item.text).text || item.text}
-                  </span>
-                  {files > 0 && (
-                    <span className="shrink-0 text-faint">
-                      {files === 1 ? '1 file' : `${files} files`}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => editQueued(item)}
-                    aria-label="Edit this message"
-                    title="Edit"
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-ink"
-                  >
-                    <PencilLine className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => cancelQueued(item)}
-                    aria-label="Cancel this message"
-                    title="Cancel"
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint hover:bg-danger/10 hover:text-danger"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
+        <Suggestions
+          suggestions={suggestions}
+          disabled={outOfCredits}
+          onPick={(suggestion) => void external.current(suggestion)}
+        />
+        <QueuedMessages queue={composer.queue} onEdit={editQueued} onCancel={cancelQueued} />
         <div
           className={cn(
             'rounded-[22px] p-2 box-sculpted transition-colors focus-within:border-signal/60',
@@ -630,193 +533,6 @@ export function AgentChat({
           </div>
         </div>
       </form>
-    </div>
-  )
-}
-
-/** The user's message; elements they pointed at in the preview show as chips. */
-function UserMessage({ text, onEdit }: { text: string; onEdit?: () => void }) {
-  const { text: body, refs } = splitReferences(text)
-  return (
-    <div className="group flex items-end justify-end gap-1">
-      {onEdit && (
-        <button
-          type="button"
-          onClick={onEdit}
-          aria-label="Edit your message"
-          title="Edit"
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:bg-ink/[0.06] hover:text-ink focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-        >
-          <PencilLine className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      )}
-      <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
-        {body}
-        {refs.length > 0 && (
-          <div className={cn('flex flex-wrap gap-1.5 whitespace-normal', body && 'mt-2')}>
-            {refs.map((ref, i) => (
-              <ElementChip
-                key={i}
-                tag={ref.tag}
-                title={`${ref.text}${ref.note ? ` — ${ref.note}` : ''} · ${ref.loc}`}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/**
- * The latest message, edited where it is. Sending it puts the project back to how it was before
- * that message, then sends the new version (with the same files and selected element).
- */
-function MessageEditor({
-  text,
-  sending,
-  onCancel,
-  onSend,
-}: {
-  text: string
-  sending: boolean
-  onCancel: () => void
-  onSend: (text: string) => void
-}) {
-  const { text: body, refs } = splitReferences(text)
-  const [value, setValue] = useState(body)
-  const input = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
-    const el = input.current
-    if (!el) return
-    el.focus()
-    el.setSelectionRange(el.value.length, el.value.length)
-  }, [])
-  useLayoutEffect(() => {
-    const el = input.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
-  }, [value])
-  const empty = !value.trim() && refs.length === 0
-  return (
-    <div className="flex justify-end">
-      <div className="w-full max-w-[90%] rounded-2xl rounded-br-md border border-signal/40 bg-raised p-2">
-        <textarea
-          ref={input}
-          value={value}
-          rows={1}
-          maxLength={MAX_MESSAGE}
-          disabled={sending}
-          aria-label="Edit your message"
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              onCancel()
-            } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              if (!empty && !sending) onSend(value)
-            }
-          }}
-          className="block w-full resize-none bg-transparent px-2 py-1 text-sm leading-5 outline-none"
-        />
-        {refs.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-2 pt-1">
-            {refs.map((ref, i) => (
-              <ElementChip key={i} tag={ref.tag} title={`${ref.text} · ${ref.loc}`} />
-            ))}
-          </div>
-        )}
-        <p className="px-2 pt-1.5 text-[11px] text-faint">
-          Sending undoes what this message changed, then sends it again.
-        </p>
-        <div className="mt-2 flex justify-end gap-1.5">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={sending}
-            className="h-8 rounded-full px-3 text-xs font-medium text-dim hover:bg-ink/[0.06] hover:text-ink disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onSend(value)}
-            disabled={empty || sending}
-            className="inline-flex h-8 btn-sculpted items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {sending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-            Send
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="text-xs text-faint">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="inline-flex items-center gap-1 hover:text-dim"
-      >
-        <ChevronRight
-          className={cn('h-3 w-3 transition-transform', open && 'rotate-90')}
-          aria-hidden
-        />
-        Thinking
-      </button>
-      {open && <p className="mt-1 ml-4 whitespace-pre-wrap">{text}</p>}
-    </div>
-  )
-}
-
-type Group =
-  | { kind: 'one'; key: string; segment: Segment }
-  | { kind: 'tools'; key: string; segments: Array<Extract<Segment, { kind: 'tool' }>> }
-
-/** Consecutive tool calls (not plans) form one group, so long runs can fold. */
-function groupSegments(segments: ReadonlyArray<Segment>): Array<Group> {
-  const out: Array<Group> = []
-  for (const segment of segments) {
-    const last = out.at(-1)
-    if (segment.kind === 'tool' && segment.step.name !== 'update_plan') {
-      if (last?.kind === 'tools') last.segments.push(segment)
-      else out.push({ kind: 'tools', key: segment.key, segments: [segment] })
-    } else {
-      out.push({ kind: 'one', key: segment.key, segment })
-    }
-  }
-  return out
-}
-
-const SHOWN_STEPS = 3
-
-/** A run of tool steps: the last few show; earlier ones fold behind "N more steps". */
-function ToolGroup({ segments }: { segments: Array<Extract<Segment, { kind: 'tool' }>> }) {
-  const [open, setOpen] = useState(false)
-  const folded = open ? 0 : segments.length - SHOWN_STEPS
-  const hidden = folded > 1 ? folded : 0
-  return (
-    <div className="space-y-0.5">
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1 rounded-full py-0.5 text-xs text-faint transition-colors hover:text-dim"
-        >
-          <ChevronRight className="h-3 w-3" aria-hidden />
-          {hidden} more steps
-        </button>
-      )}
-      {segments.slice(hidden).map((segment) => (
-        <ToolStep key={segment.key} step={segment.step} />
-      ))}
     </div>
   )
 }

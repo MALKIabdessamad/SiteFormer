@@ -6,12 +6,12 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { restoreCheckpoint } from '~/lib/server/agent/checkpoints.server'
 import { getRunRow } from '~/lib/server/agent/persistence.server'
+import { hasActiveRun } from '~/lib/server/agent/runner.server'
 import {
   appendAssistantNote,
-  hasActiveRun,
   latestRun,
   withdrawLatestMessage,
-} from '~/lib/server/agent/runner.server'
+} from '~/lib/server/agent/transcript.server'
 import { projectSession } from '~/lib/server/agent/sandbox-session.server'
 import { requireCredits } from '~/lib/server/billing/credits.server'
 import { AppError, safely } from '~/lib/server/errors.server'
@@ -20,6 +20,7 @@ import { ownedProject } from '~/lib/server/projects.server'
 import { requireUser } from '~/lib/server/require-user'
 import { serialQueue } from '~/lib/server/serial'
 import { validate } from '~/lib/server/validate'
+import { messageLabel } from '../lib/references'
 
 const RUN_ID = /^[A-Za-z0-9_-]{8,100}$/
 
@@ -56,7 +57,7 @@ export const restoreToCheckpoint = createServerFn({ method: 'POST' })
         projectSession({ ...project, sandbox_id: project.sandbox_id }, run.id),
         sha,
       )
-      const label = run.prompt.replace(/\s+/g, ' ').slice(0, 80)
+      const label = messageLabel(run.prompt, 80) || 'your message'
       await appendAssistantNote(
         project.id,
         `↩︎ Restored the project to the checkpoint ${data.point} “${label}”. Changes made after that point were undone.`,

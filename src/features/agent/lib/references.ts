@@ -21,6 +21,12 @@ export function referenceLine(element: ElementRef): string {
   return `⌖ <${element.tag}> "${excerpt(element.text)}" at ${element.loc} on ${path}`
 }
 
+/** A short one-line label for a message (its own text, without the element lines). */
+export function messageLabel(message: string, max: number): string {
+  const flat = splitReferences(message).text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
 /** The element lines of a message, as they are (kept when the message is edited). */
 export function referenceLinesOf(message: string): Array<string> {
   return message

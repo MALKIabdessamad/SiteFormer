@@ -191,8 +191,13 @@ function run(target: ProvisionTarget, work: (t: ProvisionTarget) => Promise<void
       })
     })
     .catch(async (error: unknown) => {
+      // What the project shows: never a raw Agent37 response.
       const message =
-        error instanceof SandboxError ? error.message : 'The sandbox setup failed. Try again.'
+        error instanceof SandboxError && !error.internal
+          ? error.message
+          : kind === 'setup'
+            ? 'The sandbox setup failed. Try again.'
+            : 'The sandbox didn’t wake up. Try again.'
       slog.error('Sandbox job failed', {
         event: 'sandbox.failed',
         projectId: target.projectId,
