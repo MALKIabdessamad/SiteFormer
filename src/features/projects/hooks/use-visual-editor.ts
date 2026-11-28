@@ -90,6 +90,12 @@ export function useVisualEditor({
     if (!texts.length && !busy) setTool(null)
   }
 
+  /** Brings up the message box, cursor in it (phones switch to the chat). */
+  const showChat = () => {
+    onShowChat()
+    composer.focus()
+  }
+
   const bridge = usePreviewBridge(preview.url, frameKey, (event: BridgeEvent) => {
     switch (event.type) {
       case 'ready':
@@ -97,8 +103,9 @@ export function useVisualEditor({
         preview.observe(event.path)
         break
       case 'pick':
-        // One element at a time: a new pick replaces the last one.
+        // One element at a time: a new pick replaces the last one. Then straight to writing.
         composer.setPicks([{ n: event.n, element: event.element }])
+        showChat()
         break
       case 'editing':
         setNotice(null)
@@ -163,7 +170,8 @@ export function useVisualEditor({
   }
 
   // Esc goes back to the tools from anywhere in the editor too: a click in the page never moves
-  // the keyboard there. Not while typing in a field, or with a menu open (Esc closes that).
+  // the keyboard there. Not while typing in a field, or with a menu open (Esc closes that); the
+  // empty message box counts as not typing (a pick puts the cursor there).
   const backLatest = useRef(back)
   useEffect(() => {
     backLatest.current = back
@@ -173,9 +181,12 @@ export function useVisualEditor({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       const active = document.activeElement as HTMLElement | null
+      const emptyMessageBox =
+        active instanceof HTMLTextAreaElement && active.id === 'agent-input' && !active.value.trim()
       if (
-        active?.isContentEditable ||
-        active?.closest('input, textarea, select, [role=menu], [role=dialog], [role=listbox]')
+        !emptyMessageBox &&
+        (active?.isContentEditable ||
+          active?.closest('input, textarea, select, [role=menu], [role=dialog], [role=listbox]'))
       ) {
         return
       }
@@ -194,11 +205,6 @@ export function useVisualEditor({
     setDrawing(null)
     setNotice(null)
     setEditing(false)
-  }
-
-  const showChat = () => {
-    onShowChat()
-    composer.focus()
   }
 
   /** Writes the changed texts into the code (one checkpoint); what can't be saved goes to the AI. */

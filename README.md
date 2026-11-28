@@ -66,7 +66,8 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
 - **Editing tools** (closed by default; the pencil-ruler button next to Publish opens one card
   over the preview, which changes shape smoothly with what you're doing):
   - _Select_: click an element (one at a time); it gets an outline in the page and a small blue
-    chip in the message box (its kind and tag), and travels with the next message as a line like
+    chip in the message box (its kind and tag), the cursor goes to the message box (phones switch
+    to the chat), and it travels with the next message as a line like
     `⌖ <h1> "…" at src/routes/index.tsx:23:9 on /` (the exact JSX location).
   - _Edit text_: click texts on the page and type; the card shows _N text changes · Cancel ·
     Save_. Save writes them all into the code in one checkpoint (Babel finds each element by its
@@ -74,7 +75,8 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
     reloads the page. Texts that come from code get _Ask AI_ instead.
   - Leaving a tool (its icon, Esc, or closing the bar) undoes what it started: the selected
     element leaves the message, unsent lines go; changed texts are saved or cancelled first
-    (closing the bar cancels them). _Write message_ and _Add to chat_ keep what they add.
+    (closing the bar cancels them). Esc works from the empty message box too, not once you've
+    typed. _Add to chat_ keeps the drawing it adds.
   - _Draw_: draw on the page (_Annotation · Undo · Redo · Clear_), then _Add to chat_. The
     sandbox's browser renders the same page at the same size and scroll with the lines on it, and
     that image is attached to the message (`agent_uploads.purpose = 'sketch'`: shown to the

@@ -259,11 +259,6 @@ export function PreviewTools({
       <>
         <ToolBadge icon={MousePointer2} onBack={editor.back} />
         <Label>{picked ? `<${picked}> is in your message` : 'Click an element'}</Label>
-        {picked && (
-          <button type="button" onClick={editor.showChat} className={cn(pill, 'btn-sculpted')}>
-            Write message
-          </button>
-        )}
       </>
     )
   } else if (tool === 'text') {
