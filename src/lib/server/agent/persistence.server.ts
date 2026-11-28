@@ -44,6 +44,8 @@ export type AgentRunRow = {
   created_at: string
   started_at: string | null
   finished_at: string | null
+  /** The user edited this run's message and sent it again: it left the conversation. */
+  superseded_at: string | null
 }
 
 /** RunRecord fields stored as real columns (everything else lives in `record`). */

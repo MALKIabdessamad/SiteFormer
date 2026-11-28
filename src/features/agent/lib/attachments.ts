@@ -1,5 +1,6 @@
 import { getSupabase } from '~/lib/supabase/client'
-import { uploadSource } from './upload-ref'
+import type { UIMessage } from '@tanstack/ai-react'
+import { uploadIdOf, uploadSource } from './upload-ref'
 
 /** What the server returns for a stored upload. */
 export type Upload = {
@@ -52,4 +53,27 @@ export function uploadParts(uploads: Array<Upload>) {
     source: uploadSource(upload.id, upload.mime),
     metadata: { name: upload.name },
   }))
+}
+
+/** The files a sent message carried (to send them again with an edited version of it). */
+export function messageUploads(message: UIMessage): Array<Upload> {
+  return message.parts.flatMap((part) => {
+    const id = uploadIdOf(part)
+    if (!id) return []
+    const { type, source, metadata } = part as {
+      type: string
+      source?: { mimeType?: string }
+      metadata?: { name?: string }
+    }
+    return [
+      {
+        id,
+        kind: type === 'image' ? 'image' : 'document',
+        mime: source?.mimeType ?? 'application/octet-stream',
+        name: metadata?.name ?? 'file',
+        size: 0,
+        storagePath: '',
+      },
+    ]
+  })
 }

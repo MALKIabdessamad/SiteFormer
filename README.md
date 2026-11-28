@@ -91,6 +91,11 @@ browser ──POST /api/agent──▶ enqueueRun ──▶ driver (this server 
   (`agent_runs.suggestions`), shown as a row of chips on top of the composer.
 - **Code tab.** Everyone can read the code; editing it by hand is part of the paid plans (the
   Free plan shows it view only, and the server refuses a save).
+- **Edit your latest message** (pencil next to it once the agent is done or stopped): it opens in
+  place; sending it puts the project back to how it was before that message (its run's
+  `checkpoint_before`), takes the message and its reply out of the conversation (the run stays
+  on record, `agent_runs.superseded_at`), then sends the new version with the same files and
+  selected element.
 - **Rollback.** Every run is bracketed by git commits in the sandbox. Each reply ends with a
   row of icons: _Revert to this version_ / _Undo latest edit_, plus the credits it used. A restore
   is a new commit (undoable) and adds a note to the transcript so the model knows.

@@ -49,6 +49,7 @@ export function useAgentRuns(projectId: string) {
         .from('agent_runs')
         .select(COLUMNS)
         .eq('project_id', projectId)
+        .is('superseded_at', null)
         .order('created_at', { ascending: true })
         .limit(500)
         .then(({ data, error }) => {

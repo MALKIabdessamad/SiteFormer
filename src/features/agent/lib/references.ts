@@ -21,6 +21,14 @@ export function referenceLine(element: ElementRef): string {
   return `⌖ <${element.tag}> "${excerpt(element.text)}" at ${element.loc} on ${path}`
 }
 
+/** The element lines of a message, as they are (kept when the message is edited). */
+export function referenceLinesOf(message: string): Array<string> {
+  return message
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => LINE.test(line))
+}
+
 /** A message's own text and the elements it points at. */
 export function splitReferences(message: string): { text: string; refs: Array<ParsedReference> } {
   const refs: Array<ParsedReference> = []

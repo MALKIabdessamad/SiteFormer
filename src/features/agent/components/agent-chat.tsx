@@ -17,12 +17,13 @@ import type { Project, ProjectMode } from '~/features/projects'
 import { useAgentChat } from '../hooks/use-agent-chat'
 import { releaseAttachments, useAttachments, type Attachment } from '../hooks/use-attachments'
 import type { Composer, QueuedMessage, SendOptions } from '../hooks/use-composer'
-import { uploadParts, type Upload } from '../lib/attachments'
-import { referenceLine, splitReferences } from '../lib/references'
+import { rewindLatestMessage } from '../api/checkpoints.functions'
+import { messageUploads, uploadParts, type Upload } from '../lib/attachments'
+import { referenceLine, referenceLinesOf, splitReferences } from '../lib/references'
 import { AttachButton, AttachmentChips, MessageAttachments } from './attachments'
 import { ElementChip } from './element-chip'
 import { isSettledRun, type AgentRun } from '../hooks/use-agent-runs'
-import { buildTurns, type Segment } from '../lib/turns'
+import { buildTurns, type Segment, type Turn } from '../lib/turns'
 import { Markdown } from './markdown'
 import { isModeShortcut, ModeMenu, nextMode } from './mode-menu'
 import { ReplyActions } from './reply-actions'
@@ -38,7 +39,7 @@ type AgentChatProps = {
   /** The live connection broke while a run is still going: the parent remounts the chat. */
   onConnectionLost: () => void
   /** Streaming started or stopped: the parent re-reads the runs (new run, final status). */
-  onActivity: () => void
+  onActivity: () => unknown
   /** The agent started or stopped working (as this chat sees it, even without Realtime). */
   onBusyChange?: (busy: boolean) => void
   /** No credits left: the composer offers to get more instead of sending. */
@@ -67,6 +68,9 @@ export function AgentChat({
   composer,
 }: AgentChatProps) {
   const chat = useAgentChat(project.id)
+  // The latest message, edited in place: sending it again first undoes what it changed.
+  const [editing, setEditing] = useState<string | null>(null)
+  const [rewinding, setRewinding] = useState(false)
   const [draft, setDraftState] = useState(composer.readDraft)
   const setDraft = (value: string) => {
     composer.saveDraft(value)
@@ -87,6 +91,17 @@ export function AgentChat({
   // One-click next steps for the last reply, on top of the composer.
   const suggestions = (free && lastRun?.suggestions) || []
   const turns = useMemo(() => buildTurns(chat.messages, streaming), [chat.messages, streaming])
+  const userTurns = turns.filter((turn) => turn.user !== null)
+  const editable =
+    free &&
+    !outOfCredits &&
+    !modeSaving &&
+    project.status === 'ready' &&
+    runs.length > 0 &&
+    runs.length === userTurns.length
+      ? userTurns.at(-1)?.key
+      : undefined
+  const editingKey = editable === editing || rewinding ? editing : null
 
   useEffect(() => {
     onActivity()
@@ -156,6 +171,29 @@ export function AgentChat({
       ...queue,
       { id: crypto.randomUUID(), text, uploads, attachments: items },
     ])
+
+  const resend = async (turn: Turn, run: AgentRun, typed: string) => {
+    const message = chat.messages.find((m) => m.id === turn.key)
+    const uploads = message ? messageUploads(message) : []
+    const text = [typed.trim(), ...referenceLinesOf(turn.user ?? '')].filter(Boolean).join('\n')
+    if (!text && uploads.length === 0) return
+    setRewinding(true)
+    setSendError('')
+    try {
+      await rewindLatestMessage({ data: { projectId: project.id, runId: run.id } })
+      // The conversation here ends before that message too, and its run leaves the list
+      // before the new one arrives.
+      const at = chat.messages.findIndex((m) => m.id === turn.key)
+      if (at >= 0) chat.setMessages(chat.messages.slice(0, at))
+      await onActivity()
+      setEditing(null)
+      await deliver(text, uploads)
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send. Try again.')
+    } finally {
+      setRewinding(false)
+    }
+  }
 
   /** Cancel: the queued message is deleted. */
   const cancelQueued = (item: QueuedMessage) => {
@@ -313,7 +351,20 @@ export function AgentChat({
           return (
             <li key={turn.key} className="space-y-2">
               {turn.attachments.length > 0 && <MessageAttachments ids={turn.attachments} />}
-              {turn.user !== null && <UserMessage text={turn.user} />}
+              {turn.user !== null &&
+                (editingKey === turn.key && run ? (
+                  <MessageEditor
+                    text={turn.user}
+                    sending={rewinding}
+                    onCancel={() => setEditing(null)}
+                    onSend={(typed) => void resend(turn, run, typed)}
+                  />
+                ) : (
+                  <UserMessage
+                    text={turn.user}
+                    onEdit={editable === turn.key ? () => setEditing(turn.key) : undefined}
+                  />
+                ))}
               <div className="space-y-1.5">
                 {groupSegments(turn.segments).map((group) =>
                   group.kind === 'tools' ? (
@@ -584,10 +635,21 @@ export function AgentChat({
 }
 
 /** The user's message; elements they pointed at in the preview show as chips. */
-function UserMessage({ text }: { text: string }) {
+function UserMessage({ text, onEdit }: { text: string; onEdit?: () => void }) {
   const { text: body, refs } = splitReferences(text)
   return (
-    <div className="flex justify-end">
+    <div className="group flex items-end justify-end gap-1">
+      {onEdit && (
+        <button
+          type="button"
+          onClick={onEdit}
+          aria-label="Edit your message"
+          title="Edit"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:bg-ink/[0.06] hover:text-ink focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+        >
+          <PencilLine className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      )}
       <div className="max-w-[90%] rounded-2xl rounded-br-md bg-raised px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
         {body}
         {refs.length > 0 && (
@@ -601,6 +663,93 @@ function UserMessage({ text }: { text: string }) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The latest message, edited where it is. Sending it puts the project back to how it was before
+ * that message, then sends the new version (with the same files and selected element).
+ */
+function MessageEditor({
+  text,
+  sending,
+  onCancel,
+  onSend,
+}: {
+  text: string
+  sending: boolean
+  onCancel: () => void
+  onSend: (text: string) => void
+}) {
+  const { text: body, refs } = splitReferences(text)
+  const [value, setValue] = useState(body)
+  const input = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = input.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [])
+  useLayoutEffect(() => {
+    const el = input.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
+  }, [value])
+  const empty = !value.trim() && refs.length === 0
+  return (
+    <div className="flex justify-end">
+      <div className="w-full max-w-[90%] rounded-2xl rounded-br-md border border-signal/40 bg-raised p-2">
+        <textarea
+          ref={input}
+          value={value}
+          rows={1}
+          maxLength={MAX_MESSAGE}
+          disabled={sending}
+          aria-label="Edit your message"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              onCancel()
+            } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              if (!empty && !sending) onSend(value)
+            }
+          }}
+          className="block w-full resize-none bg-transparent px-2 py-1 text-sm leading-5 outline-none"
+        />
+        {refs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-2 pt-1">
+            {refs.map((ref, i) => (
+              <ElementChip key={i} tag={ref.tag} title={`${ref.text} · ${ref.loc}`} />
+            ))}
+          </div>
+        )}
+        <p className="px-2 pt-1.5 text-[11px] text-faint">
+          Sending undoes what this message changed, then sends it again.
+        </p>
+        <div className="mt-2 flex justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={sending}
+            className="h-8 rounded-full px-3 text-xs font-medium text-dim hover:bg-ink/[0.06] hover:text-ink disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onSend(value)}
+            disabled={empty || sending}
+            className="inline-flex h-8 btn-sculpted items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {sending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            Send
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test'
-import { referenceLine, splitReferences } from '../../src/features/agent/lib/references'
+import {
+  referenceLine,
+  referenceLinesOf,
+  splitReferences,
+} from '../../src/features/agent/lib/references'
 import { fixRequest, parseBridgeEvent } from '../../src/features/projects/lib/preview-bridge'
 import {
   applyTextEdits,
@@ -127,4 +131,10 @@ test('bridge messages are checked before use', () => {
   ).toBeNull()
   expect(parseBridgeEvent({ sf: 2, type: 'updated' })).toBeNull()
   expect(parseBridgeEvent({ sf: 1, type: 'unknown' })).toBeNull()
+})
+
+test('an edited message keeps its element lines as they were', () => {
+  const line = '⌖ <h1> "Hi" at src/routes/index.tsx:5:7 on /'
+  expect(referenceLinesOf(`Make it red\n${line}\n`)).toEqual([line])
+  expect(referenceLinesOf('No elements here')).toEqual([])
 })

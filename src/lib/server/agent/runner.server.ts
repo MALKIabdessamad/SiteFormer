@@ -163,6 +163,46 @@ async function appendUserMessage(projectId: string, prompt: string, attachments:
   await persistence.stores.messages.saveThread(projectId, [...messages, { role: 'user', content }])
 }
 
+/** The text of a stored user message. */
+function userText(message: ModelMessage): string {
+  if (typeof message.content === 'string') return message.content
+  return (message.content ?? []).map((part) => (part.type === 'text' ? part.content : '')).join('')
+}
+
+/** The project's latest run that is still part of the conversation. */
+export async function latestRun(projectId: string): Promise<AgentRunRow | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('agent_runs')
+    .select('*')
+    .eq('project_id', projectId)
+    .is('superseded_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle<AgentRunRow>()
+  if (error) throw error
+  return data
+}
+
+/**
+ * Takes a run's message out of the conversation (the user edits it and sends it again): the
+ * transcript ends before it, and the run stays on record, marked superseded. The message is only
+ * removed while it is the transcript's latest user message, so a repeat never removes an
+ * earlier one.
+ */
+export async function withdrawLatestMessage(run: AgentRunRow): Promise<void> {
+  const messages = await persistence.stores.messages.loadThread(run.project_id)
+  let at = messages.length - 1
+  while (at >= 0 && messages[at]!.role !== 'user') at--
+  if (at >= 0 && userText(messages[at]!).trim() === run.prompt.trim()) {
+    await persistence.stores.messages.saveThread(run.project_id, messages.slice(0, at))
+  }
+  const { error } = await supabaseAdmin()
+    .from('agent_runs')
+    .update({ superseded_at: new Date().toISOString() })
+    .eq('id', run.id)
+  if (error) throw error
+}
+
 /**
  * Queues a run for a user message and starts driving it. Idempotent for the same run id.
  * Throws AppError('…', 'limit') if another run of the project is still active.
